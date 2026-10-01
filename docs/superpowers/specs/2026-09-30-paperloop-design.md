@@ -128,7 +128,7 @@ Two-pass funnel to keep cost low.
 - `too_large_to_run`
 - `not_a_method`
 
-**Pass two, scorecard.** Stronger model over full text for survivors. Output per paper:
+**Pass two, scorecard.** Stronger model over full text for survivors, capped at the top 10 by pass-one confidence (`max_fulltext_candidates` in config). This cap is the main lever on OpenAI cost per run. Output per paper:
 
 ```
 arxiv_id, title,
@@ -185,13 +185,15 @@ Surviving tests are hashed into `manifest.json`. `scope/` is committed. From her
 
 ### 9.1 Environment
 
-A Modal sandbox with a GPU attached and a fresh Python environment. `workspace/` mounted read-write. `spec.md`, `interface.md`, and `tests/public/` mounted read-only. `tests/hidden/` is never present in this sandbox. Outbound network restricted to package installs and the dataset download named in the spec. Sandbox is destroyed when the run ends.
+A CPU-only Modal sandbox with a fresh Python environment. The builder spends most of its time reading and writing code, so no GPU is attached to this sandbox. `workspace/` mounted read-write. `spec.md`, `interface.md`, and `tests/public/` mounted read-only. `tests/hidden/` is never present in this sandbox. Outbound network restricted to package installs and the dataset download named in the spec. Sandbox is destroyed when the run ends.
+
+GPU time is consumed only inside `run_tests` (9.2), which executes in a separate GPU-backed Modal function. The builder's shell can run small CPU experiments, but anything needing a GPU goes through `run_tests`. The GPU budget cap therefore measures exactly what the experiments cost.
 
 ### 9.2 Builder inputs and tools
 
 Inputs: the paper, `spec.md`, `interface.md`, the public tests. Tools: shell inside the sandbox, read and write under `workspace/`, plus two manager-owned tools:
 
-- **`run_tests`**: the manager snapshots `workspace/`, runs the public suite against that snapshot in a separate execution context the builder's shell cannot reach, appends the exact results to `build.log`, and returns them to the builder. The builder may run Python freely in its own shell for experiments, and may even run pytest on the mounted public tests, but only `run_tests` results count and only the manager writes them. Test history is therefore written by the manager, never by the builder.
+- **`run_tests`**: the manager snapshots `workspace/`, runs the public suite against that snapshot in a separate GPU-backed Modal function the builder's shell cannot reach, records GPU seconds and the exact results to `build.log`, and returns the results to the builder. Each call has its own timeout from config so a runaway experiment cannot consume the whole GPU budget in one run. The builder may run Python freely in its own shell for experiments, and may even run pytest on the mounted public tests, but only `run_tests` results count and only the manager writes them. Test history is therefore written by the manager, never by the builder.
 - **`give_up(reason)`**: ends the loop with `incomplete_stuck` and records the reason.
 
 ### 9.3 Loop and caps
@@ -219,7 +221,7 @@ If the session is compacted, the compaction summary must preserve the current fa
 
 ### 10.1 Environment
 
-A fresh Modal sandbox, same GPU class, not the builder's. The manager copies in `workspace/` and the frozen `scope/`.
+A fresh CPU-only Modal sandbox, not the builder's. The manager copies in `workspace/` and the frozen `scope/`. `run_hidden_tests` uses the same GPU-backed function as `run_tests`, pointed at the hidden suite.
 
 ### 10.2 Inspector inputs and tools
 
@@ -260,13 +262,14 @@ Write `summary.md`: paper, claim, outcome, attempts used, dollars spent, inspect
 - **Secrets** in Modal: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), `OPENAI_API_KEY`, GitHub token for pushing `runs/`. `ANTHROPIC_API_KEY` is deliberately absent.
 - **Spend limit** on the Modal account set above the per-run budget as a hard ceiling for GPU cost.
 - **Models per role**, in config. Scout pass one: the cheapest current OpenAI model suitable for classification. Scout pass two, scoper, inspector: the strongest current OpenAI reasoning model. Exact IDs are chosen from OpenAI's model list at implementation time, not fixed here. Builder: whatever the Agent SDK defaults to under the subscription, overridable in config.
-- **Rough cost per run:** low single-digit dollars of OpenAI tokens plus low single-digit dollars of GPU, plus builder time against the subscription. Per-run GPU budget default: 10 USD.
+- **Rough cost per run** at September 2026 prices: about 0.50 to 3 USD of OpenAI tokens depending on model choice, about 1 to 1.50 USD of GPU, plus builder time against the subscription. Per-run GPU budget default: 10 USD.
 
 ## 13. Repository layout
 
 ```
 paperloop/
-  config.yaml          categories, budget, caps, min_seeds, model per role, policy name
+  config.yaml          categories, budget, caps, min_seeds, max_fulltext_candidates,
+                       run_tests timeout, GPU type, model per role, max tier, policy name
   manager/
     graph.py           LangGraph graph definition and state schema
     stages/            one module per stage

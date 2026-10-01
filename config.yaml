@@ -1,0 +1,21 @@
+# paper2code configuration. Every key here has a matching field on paper2code.config.Config.
+runs_root: runs
+categories: [cs.LG, cs.CL, stat.ML]
+budget:
+  limit_usd: 10.0
+caps:
+  test_runs: 25
+  wall_clock_s: 7200      # 2 h on Max 5x; use 14400 on Max 20x
+  stall_n: 5
+min_seeds: 3
+max_fulltext_candidates: 10
+run_tests_timeout_s: 900
+gpu_type: T4
+max_tier: 5x
+policy: select_v1_testability
+models:
+  scout_pass1: ""         # chosen at build step 2 from OpenAI's model list
+  scout_pass2: ""
+  scoper: ""
+  inspector: ""
+  builder: ""             # empty = Agent SDK default under the subscription

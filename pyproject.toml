@@ -1,0 +1,26 @@
+[project]
+name = "paper2code"
+version = "0.1.0"
+description = "Daily unattended loop: pick an arXiv paper, scope it, build it against tests, inspect the result."
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.2",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+paper2code = "paper2code.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

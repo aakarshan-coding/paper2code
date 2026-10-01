@@ -87,7 +87,8 @@ class LocalTestRunner:
             start = time.monotonic()
             try:
                 proc = subprocess.run(
-                    cmd, cwd=snapshot, env=env, capture_output=True, text=True, timeout=self.timeout_s,
+                    cmd, cwd=snapshot, env=env, stdin=subprocess.DEVNULL,
+                    capture_output=True, text=True, timeout=self.timeout_s,
                 )
             except subprocess.TimeoutExpired as exc:
                 output = (exc.stdout or "") + (exc.stderr or "")

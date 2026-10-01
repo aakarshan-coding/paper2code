@@ -81,11 +81,16 @@ def run_pipeline(run_dir: Path, ctx: RunContext, stages: Mapping[str, StageFn] |
 
 
 def run_stage(stage: str, run_dir: Path, ctx: RunContext, stages: Mapping[str, StageFn] | None = None) -> RunRecord:
-    """Run exactly one stage. Refuses if the previous stage has not completed."""
+    """Run exactly one stage.
+
+    Refuses if the previous stage has not completed, unless the run already has an
+    outcome: then the pipeline itself would skip straight to report, so single-stage
+    invocation may too.
+    """
     stages = dict(stages) if stages is not None else default_stages()
     record = RunRecord.load(run_dir)
     idx = stage_index(stage)
-    if idx > 0 and not record.is_done(STAGES[idx - 1]):
+    if idx > 0 and record.outcome is None and not record.is_done(STAGES[idx - 1]):
         raise ValueError(
             f"{stage} requires {STAGES[idx - 1]} to have completed; run.json says stage={record.stage!r}"
         )

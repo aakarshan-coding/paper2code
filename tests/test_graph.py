@@ -88,3 +88,24 @@ def test_default_stages_before_scope_are_not_implemented_yet(tmp_path):
     rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
     with pytest.raises(NotImplementedError):
         run_pipeline(rec.run_dir, _ctx(tmp_path))
+
+
+def test_run_stage_allows_report_after_outcome_short_circuit(tmp_path):
+    rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
+    rec.stage = "build"
+    rec.outcome = Outcome.INCOMPLETE_STUCK
+    rec.save()
+    calls = []
+    final = run_stage("report", rec.run_dir, _ctx(tmp_path), _recording_stages(calls))
+    assert calls == ["report"]
+    assert final.stage == "report"
+
+
+def test_run_stage_still_refuses_skip_ahead_without_outcome(tmp_path):
+    rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
+    rec.stage = "build"
+    rec.save()
+    calls = []
+    with pytest.raises(ValueError, match="report requires inspect"):
+        run_stage("report", rec.run_dir, _ctx(tmp_path), _recording_stages(calls))
+    assert calls == []

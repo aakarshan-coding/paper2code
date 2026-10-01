@@ -1,11 +1,11 @@
-# Paperloop: Design Spec
+# paper2code: Design Spec
 
 **Date:** 2026-09-30
 **Status:** Draft for review
 
 ## 1. Purpose
 
-Paperloop is a daily, fully unattended job that picks one new arXiv paper, scopes it into a small experiment with tests, implements it in a loop against those tests, and records what happened.
+paper2code is a daily, fully unattended job that picks one new arXiv paper, scopes it into a small experiment with tests, implements it in a loop against those tests, and records what happened.
 
 The papers are not the product. The loop is. Each daily run is one trial of an autonomous scope-then-build system on a fresh task the author did not write. The value is in the accumulated record: how often the loop finishes, where it stalls, whether its scoping produces satisfiable tests, and whether it can be caught lying about completion.
 
@@ -267,7 +267,7 @@ Write `summary.md`: paper, claim, outcome, attempts used, dollars spent, inspect
 ## 13. Repository layout
 
 ```
-paperloop/
+paper2code/
   config.yaml          categories, budget, caps, min_seeds, max_fulltext_candidates,
                        run_tests timeout, GPU type, model per role, max tier, policy name
   manager/
@@ -289,7 +289,7 @@ paperloop/
     tools.py           run_tests, run_hidden_tests implementations
   dashboard/
     build.py           static site generator over runs/
-  tests/               tests for paperloop itself
+  tests/               tests for paper2code itself
   docs/superpowers/specs/
 ```
 
@@ -300,16 +300,16 @@ paperloop/
 Every stage runs from the command line on a given arXiv ID:
 
 ```
-paperloop fetch
-paperloop score --arxiv-id 2509.12345
-paperloop scope --arxiv-id 2509.12345
-paperloop build --run runs/2026-09-30 --no-gpu
-paperloop inspect --run runs/2026-09-30 --no-gpu
+paper2code fetch
+paper2code score --arxiv-id 2509.12345
+paper2code scope --arxiv-id 2509.12345
+paper2code build --run runs/2026-09-30 --no-gpu
+paper2code inspect --run runs/2026-09-30 --no-gpu
 ```
 
 `--no-gpu` swaps the Modal sandbox for a local subprocess with the same tool interface. This is how prompts are iterated without paying for a full run.
 
-## 15. Testing paperloop itself
+## 15. Testing paper2code itself
 
 - **Unit tests** for policies, hashing and freeze, the stub check, cap enforcement, and the verdict rule.
 - **Canary scope**: a hand-written fake paper with a known-good reference implementation. The full pipeline from scope onward must reach `completed` on it in local mode.

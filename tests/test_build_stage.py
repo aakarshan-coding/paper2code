@@ -1,12 +1,14 @@
 import shutil
 from datetime import date
 
+import pytest
+
 from paper2code.agents.builder.base import BuildContext, BuildFinished
 from paper2code.agents.builder.stub import StubBuilder
 from paper2code.config import Config
 from paper2code.manager.buildlog import BuildLog
-from paper2code.manager.freeze import write_manifest
-from paper2code.manager.graph import RunContext, run_stage
+from paper2code.manager.freeze import hash_tree, tree_digest, write_manifest
+from paper2code.manager.graph import RunContext, default_stages, run_stage
 from paper2code.manager.outcomes import Outcome
 from paper2code.manager.record import Caps, RunRecord, create_run
 from paper2code.manager.stages import build as build_stage
@@ -123,3 +125,30 @@ def test_stub_builder_copies_reference_tree(tmp_path):
     assert (ws / "main.py").read_text(encoding="utf-8") == "x = 1\n"
     assert (ws / "pkg" / "__init__.py").exists()
     assert calls == ["run"]
+
+
+def test_public_pass_records_workspace_digest(tmp_path, canary_dir):
+    rec = _seed_run(tmp_path, canary_dir)
+    final = run_stage("build", rec.run_dir, _ctx(tmp_path, canary_dir / "reference"))
+    assert final.workspace_sha256 == tree_digest(hash_tree(rec.run_dir / "workspace"))
+
+
+def test_builder_exception_is_logged_and_recorded(tmp_path, canary_dir):
+    rec = _seed_run(tmp_path, canary_dir)
+
+    class ExplodingBuilder:
+        def build(self, ctx: BuildContext) -> None:
+            raise RuntimeError("kaboom")
+
+    stages = {**default_stages(), "build": lambda r, c: build_stage.run_with_builder(r, c, ExplodingBuilder())}
+    with pytest.raises(RuntimeError, match="kaboom"):
+        run_stage("build", rec.run_dir, _ctx(tmp_path, None), stages)
+    rows = BuildLog(rec.run_dir / "build.log").read()
+    assert rows[-1]["event"] == "error"
+    assert "kaboom" in rows[-1]["message"]
+    final = RunRecord.load(rec.run_dir)
+    assert final.stage == "scope"  # not advanced: the stage re-runs on resume
+    assert final.outcome is None
+    assert final.error is not None
+    assert (final.error.stage, final.error.reason) == ("build", "exception")
+    assert "kaboom" in final.error.message

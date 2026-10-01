@@ -4,7 +4,9 @@ import json
 from paper2code.manager.freeze import (
     MANIFEST_NAME,
     hash_tree,
+    manifest_sha256,
     read_manifest,
+    tree_digest,
     verify_manifest,
     write_manifest,
 )
@@ -71,3 +73,29 @@ def test_rewriting_manifest_itself_is_not_a_mismatch(tmp_path):
     write_manifest(scope)
     write_manifest(scope)
     assert verify_manifest(scope) == []
+
+
+def test_missing_manifest_is_a_mismatch(tmp_path):
+    scope = _make_scope(tmp_path)
+    write_manifest(scope)
+    (scope / MANIFEST_NAME).unlink()
+    assert verify_manifest(scope) == [MANIFEST_NAME]
+
+
+def test_anchor_detects_rewritten_manifest(tmp_path):
+    scope = _make_scope(tmp_path)
+    write_manifest(scope)
+    anchor = manifest_sha256(scope)
+    assert verify_manifest(scope, anchor) == []
+    (scope / "tests" / "hidden" / "test_h.py").write_text("def test_h(): assert True\n", encoding="utf-8")
+    write_manifest(scope)
+    assert verify_manifest(scope) == []  # the unanchored check is fooled by a re-freeze
+    assert verify_manifest(scope, anchor) == [MANIFEST_NAME]
+
+
+def test_tree_digest_is_stable_and_sensitive(tmp_path):
+    scope = _make_scope(tmp_path)
+    d1 = tree_digest(hash_tree(scope))
+    assert d1 == tree_digest(hash_tree(scope))
+    (scope / "spec.md").write_text("spec2", encoding="utf-8")
+    assert tree_digest(hash_tree(scope)) != d1

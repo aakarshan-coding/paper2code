@@ -8,7 +8,7 @@ from typing import Callable, Mapping, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from paper2code.config import Config
-from paper2code.manager.record import STAGES, RunRecord, stage_index
+from paper2code.manager.record import STAGES, RunError, RunRecord, stage_index
 
 
 class PipelineState(TypedDict):
@@ -53,7 +53,15 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
         record = RunRecord.load(Path(state["run_dir"]))
         if _should_skip(record, stage):
             return {}
-        fn(record, ctx)
+        if record.error is not None and record.error.reason == "exception":
+            record.error = None  # a previous attempt crashed; this attempt starts clean
+        try:
+            fn(record, ctx)
+        except Exception as exc:
+            # Leave `stage` alone so the stage re-runs on resume, but record what happened.
+            record.error = RunError(stage=stage, reason="exception", message=f"{type(exc).__name__}: {exc}")
+            record.save()
+            raise
         record.stage = stage
         record.save()
         return {}

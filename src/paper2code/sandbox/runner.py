@@ -15,7 +15,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
+from paper2code.manager.freeze import hash_tree, tree_digest
+
+# Must agree with manager/freeze.py _IGNORED_DIRS; see the note there.
 _IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc")
+
+# The workspace is untrusted. pytest must be imported before the workspace is on sys.path, or a
+# workspace `pytest.py` (or `sitecustomize.py` at interpreter start-up) replaces the test runner.
+# `python -I` keeps the cwd and the script directory off sys.path and ignores PYTHON* env vars.
+_BOOTSTRAP = """\
+import sys
+import pytest  # resolved from site-packages: the workspace is not on sys.path yet
+sys.path.insert(0, sys.argv[1])
+sys.exit(pytest.main(sys.argv[2:]))
+"""
+_STRIPPED_ENV = ("PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")
 
 
 @dataclass(frozen=True)
@@ -29,6 +43,7 @@ class TestRunResult:
     duration_s: float
     gpu_seconds: float
     output: str
+    workspace_sha256: str = ""  # tree_digest of the snapshot that was tested
 
     @property
     def all_passed(self) -> bool:
@@ -74,27 +89,29 @@ class LocalTestRunner:
             shutil.copytree(workspace, snapshot, ignore=_IGNORE)
             shutil.copytree(tests_dir, tests_copy, ignore=_IGNORE)
             report = Path(tmp) / "report.xml"
-            env = {
-                **os.environ,
-                "PYTHONPATH": str(snapshot),
-                "PYTHONDONTWRITEBYTECODE": "1",
-            }
+            bootstrap = Path(tmp) / "bootstrap.py"
+            bootstrap.write_text(_BOOTSTRAP, encoding="utf-8")
+            digest = tree_digest(hash_tree(snapshot))
+            env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
+            env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
             cmd = [
-                sys.executable, "-m", "pytest", str(tests_copy),
+                sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(tests_copy),
                 "-q", "-p", "no:cacheprovider",
                 f"--junitxml={report}", "--rootdir", str(tests_copy),
             ]
             start = time.monotonic()
             try:
                 proc = subprocess.run(
-                    cmd, cwd=snapshot, env=env, stdin=subprocess.DEVNULL,
+                    cmd, cwd=tmp, env=env, stdin=subprocess.DEVNULL,
                     capture_output=True, text=True, timeout=self.timeout_s,
                 )
             except subprocess.TimeoutExpired as exc:
                 output = (exc.stdout or "") + (exc.stderr or "")
                 if isinstance(output, bytes):
                     output = output.decode("utf-8", errors="replace")
-                return TestRunResult((), (), -1, True, time.monotonic() - start, 0.0, output)
+                return TestRunResult((), (), -1, True, time.monotonic() - start, 0.0, output, digest)
             duration = time.monotonic() - start
             passed, failed = parse_junit(report) if report.exists() else ((), ())
-            return TestRunResult(passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr)
+            return TestRunResult(
+                passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr, digest,
+            )

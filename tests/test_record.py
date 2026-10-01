@@ -37,8 +37,10 @@ def test_create_run_writes_run_json_with_spec_fields(tmp_path):
     data = json.loads((rec.run_dir / "run.json").read_text(encoding="utf-8"))
     assert set(data) == {
         "run_id", "started_at", "finished_at", "stage", "outcome", "paper", "policy",
-        "budget", "caps", "counters", "error",
+        "budget", "caps", "counters", "error", "scope_manifest_sha256", "workspace_sha256",
     }
+    assert data["scope_manifest_sha256"] is None
+    assert data["workspace_sha256"] is None
     assert data["run_id"] == "2026-09-30"
     assert data["stage"] is None
     assert data["outcome"] is None
@@ -70,6 +72,8 @@ def test_save_and_load_roundtrip(tmp_path):
     rec.counters.test_runs_used = 2
     rec.budget.gpu_seconds = 12.5
     rec.error = RunError(stage="build", reason="rate_limited", message="window exhausted")
+    rec.scope_manifest_sha256 = "a" * 64
+    rec.workspace_sha256 = "b" * 64
     rec.save()
 
     loaded = RunRecord.load(rec.run_dir)
@@ -81,6 +85,8 @@ def test_save_and_load_roundtrip(tmp_path):
     assert loaded.budget.gpu_seconds == 12.5
     assert loaded.caps.test_runs == 3
     assert loaded.error == RunError("build", "rate_limited", "window exhausted")
+    assert loaded.scope_manifest_sha256 == "a" * 64
+    assert loaded.workspace_sha256 == "b" * 64
 
 
 def test_is_done_compares_stage_order(tmp_path):

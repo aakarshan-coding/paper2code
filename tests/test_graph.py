@@ -5,7 +5,7 @@ import pytest
 from paper2code.config import Config
 from paper2code.manager.graph import RunContext, run_pipeline, run_stage
 from paper2code.manager.outcomes import Outcome
-from paper2code.manager.record import STAGES, Caps, RunRecord, create_run
+from paper2code.manager.record import STAGES, Caps, RunError, RunRecord, create_run
 
 
 def _ctx(tmp_path):
@@ -109,3 +109,14 @@ def test_run_stage_still_refuses_skip_ahead_without_outcome(tmp_path):
     with pytest.raises(ValueError, match="report requires inspect"):
         run_stage("report", rec.run_dir, _ctx(tmp_path), _recording_stages(calls))
     assert calls == []
+
+
+def test_stage_exception_records_error_and_clears_on_success(tmp_path):
+    rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
+    calls = []
+    stages = _recording_stages(calls, raise_once_at="build")
+    with pytest.raises(RuntimeError):
+        run_pipeline(rec.run_dir, _ctx(tmp_path), stages)
+    assert RunRecord.load(rec.run_dir).error == RunError("build", "exception", "RuntimeError: boom in build")
+    run_pipeline(rec.run_dir, _ctx(tmp_path), stages)
+    assert RunRecord.load(rec.run_dir).error is None

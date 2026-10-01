@@ -107,3 +107,37 @@ def test_parse_junit(tmp_path):
     passed, failed = parse_junit(xml)
     assert passed == ("test_a::test_ok",)
     assert failed == ("test_a::test_bad", "test_a::test_err", "test_a::test_skip")
+
+
+def test_workspace_cannot_shadow_pytest_or_sitecustomize(tmp_path):
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    marker = tmp_path / "owned.txt"
+    _write(ws / "mod.py", "X = 1\n")
+    _write(ws / "pytest.py", """
+        import sys
+        from pathlib import Path
+        for a in sys.argv:
+            if a.startswith("--junitxml="):
+                Path(a.split("=", 1)[1]).write_text(
+                    '<testsuites><testsuite><testcase classname="fake" name="t"/></testsuite></testsuites>'
+                )
+        sys.exit(0)
+    """)
+    _write(ws / "sitecustomize.py", f"import pathlib\npathlib.Path({str(marker)!r}).write_text('x')\n")
+    _write(tests / "test_mod.py", "from mod import X\ndef test_real(): assert X == 2\n")
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.all_passed is False
+    assert result.failed == ("test_mod::test_real",)
+    assert not marker.exists()
+
+
+def test_result_carries_snapshot_digest(tmp_path):
+    from paper2code.manager.freeze import hash_tree, tree_digest
+
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    _write(ws / "mod.py", "X = 1\n")
+    _write(tests / "test_mod.py", "from mod import X\ndef test_x(): assert X == 1\n")
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.workspace_sha256 == tree_digest(hash_tree(ws))

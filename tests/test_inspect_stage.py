@@ -2,7 +2,7 @@ import shutil
 from datetime import date
 
 from paper2code.config import Config
-from paper2code.manager.freeze import write_manifest
+from paper2code.manager.freeze import hash_tree, manifest_sha256, tree_digest, write_manifest
 from paper2code.manager.graph import RunContext, run_stage
 from paper2code.manager.outcomes import Outcome
 from paper2code.manager.record import Caps, create_run
@@ -14,6 +14,8 @@ def _seed_built_run(tmp_path, canary_dir, implementation):
     shutil.copytree(canary_dir / "scope", rec.run_dir / "scope")
     write_manifest(rec.run_dir / "scope")
     shutil.copytree(canary_dir / implementation, rec.run_dir / "workspace")
+    rec.scope_manifest_sha256 = manifest_sha256(rec.run_dir / "scope")
+    rec.workspace_sha256 = tree_digest(hash_tree(rec.run_dir / "workspace"))
     rec.stage = "build"
     rec.save()
     return rec
@@ -61,3 +63,29 @@ def test_added_public_conftest_is_tests_tampered(tmp_path, canary_dir):
     (rec.run_dir / "scope" / "tests" / "public" / "conftest.py").write_text("", encoding="utf-8")
     final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
     assert final.outcome is Outcome.TESTS_TAMPERED
+
+
+def test_refrozen_scope_is_tests_tampered(tmp_path, canary_dir):
+    rec = _seed_built_run(tmp_path, canary_dir, "hardcoded")
+    hidden = rec.run_dir / "scope" / "tests" / "hidden" / "test_claim_hidden.py"
+    hidden.write_text("def test_nothing():\n    assert True\n", encoding="utf-8")
+    write_manifest(rec.run_dir / "scope")  # attacker re-freezes so the in-tree check is clean
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert final.outcome is Outcome.TESTS_TAMPERED
+    assert "manifest.json" in Verdict.load(rec.run_dir).integrity_mismatches
+
+
+def test_deleted_manifest_is_tests_tampered(tmp_path, canary_dir):
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    (rec.run_dir / "scope" / "manifest.json").unlink()
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert final.outcome is Outcome.TESTS_TAMPERED
+    assert Verdict.load(rec.run_dir).integrity_mismatches == ["manifest.json"]
+
+
+def test_workspace_changed_after_public_pass_is_tests_tampered(tmp_path, canary_dir):
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    shutil.copy(canary_dir / "hardcoded" / "canary_method.py", rec.run_dir / "workspace" / "canary_method.py")
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert final.outcome is Outcome.TESTS_TAMPERED
+    assert Verdict.load(rec.run_dir).integrity_mismatches == ["workspace"]

@@ -77,6 +77,10 @@ class RunRecord:
     caps: Caps = field(default_factory=Caps)
     counters: Counters = field(default_factory=Counters)
     error: RunError | None = None
+    # Freeze anchors, written only by the manager. The inspector verifies scope/ and workspace/
+    # against these, so a builder with filesystem access cannot re-freeze its way to `completed`.
+    scope_manifest_sha256: str | None = None
+    workspace_sha256: str | None = None
 
     def is_done(self, stage: str) -> bool:
         """True if `stage` (or a later one) has already completed for this run."""
@@ -103,6 +107,8 @@ class RunRecord:
             caps=Caps(**d["caps"]),
             counters=Counters(**d["counters"]),
             error=RunError(**d["error"]) if d.get("error") else None,
+            scope_manifest_sha256=d.get("scope_manifest_sha256"),
+            workspace_sha256=d.get("workspace_sha256"),
         )
 
     def save(self) -> None:

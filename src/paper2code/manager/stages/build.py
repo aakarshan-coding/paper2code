@@ -32,6 +32,9 @@ class BuildSession:
         self.record.counters.test_runs_used += 1
         self.record.counters.attempts += 1
         self.record.budget.gpu_seconds += result.gpu_seconds
+        if result.all_passed:
+            # Anchor the exact tree that passed; the inspector refuses a workspace that drifted.
+            self.record.workspace_sha256 = result.workspace_sha256
         self.record.save()
         self.log.append({
             "event": "run_tests",
@@ -79,6 +82,9 @@ def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> No
         builder.build(build_ctx)
     except BuildFinished:
         pass
+    except Exception as exc:
+        log.append({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
+        raise
     if not session.finished:
         session.finish(BUILDER_RETURNED)
     log.append({"event": "session_end", "reason": session.finish_reason})

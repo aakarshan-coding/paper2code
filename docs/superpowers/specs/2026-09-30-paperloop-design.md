@@ -26,8 +26,20 @@ Explicit non-goals: producing publication-quality reproductions, covering every 
 | arXiv categories (initial) | cs.LG, cs.CL, stat.ML. Config list. |
 | Selection policy (initial) | Highest testability under budget. Later: difficulty ladder, then interest-weighted. |
 | Orchestration | LangGraph state graph for the pipeline |
-| Agent harness | Claude Agent SDK for the builder; API calls or SDK sessions with restricted tools for other roles |
+| Builder harness | Claude Agent SDK, authenticated with the author's Claude Max subscription via `CLAUDE_CODE_OAUTH_TOKEN` |
+| Scout, scoper, inspector | OpenAI models called from LangGraph nodes, billed to existing OpenAI API credits |
 | Language | Python |
+
+### 2.1 Why the hybrid
+
+The author has a Claude Max subscription and prepaid OpenAI API credits, but no Anthropic API credits. Per Anthropic's support article "Use the Claude Agent SDK with your Claude plan", the Agent SDK may be used for personal, unattended work under a subscription by generating a one-year token with `claude setup-token`. Usage draws from the subscription's 5-hour rolling window and weekly cap. The builder is the only role that benefits from a full coding harness and is a single long session, so it goes on the subscription. The scout processes hundreds of abstracts a day and the scoper and inspector are one-shot calls, so they go on OpenAI credits and never touch the subscription window.
+
+Consequences:
+
+- `ANTHROPIC_API_KEY` must not be set anywhere in the builder's environment. If present it silently takes precedence over the subscription token.
+- The subscription token expires yearly and must be regenerated interactively.
+- A subscription rate limit hit mid-build is an infrastructure outcome, not a builder failure. See 4.1.
+- The Max tier (5x or 20x) is a config value. Defaults below assume 5x until confirmed.
 
 ## 3. System overview
 
@@ -86,7 +98,7 @@ Fixed list. Incomplete is a normal outcome, not an error.
 | `incomplete_stuck` | Builder called `give_up`, or produced the identical failing set N runs in a row |
 | `scope_rejected` | Every shortlisted paper failed scoping or feasibility |
 | `no_candidates` | Nothing passed eligibility that day |
-| `error` | Infrastructure failure. `run.json` records the stage. |
+| `error` | Infrastructure failure. `run.json` records the stage and a reason. Reasons include `rate_limited` (subscription window or weekly cap hit during build), `sandbox_failed`, `api_error`. |
 
 ### 4.2 `run.json` fields
 
@@ -95,7 +107,7 @@ run_id, started_at, finished_at, stage, outcome,
 paper {arxiv_id, title, url}, policy {name, version},
 budget {limit_usd, spent_usd, spent_tokens, gpu_seconds},
 caps {test_runs, wall_clock_s, stall_n}, counters {test_runs_used, attempts},
-error {stage, message} | null
+error {stage, reason, message} | null
 ```
 
 ## 5. Stage: fetch
@@ -189,11 +201,15 @@ One Agent SDK session. The builder reads, writes code, calls `run_tests`, reads 
 | Cap | Default | Outcome if hit |
 |---|---|---|
 | `run_tests` calls | 25 | `incomplete_budget` |
-| Wall clock | 4 h | `incomplete_budget` |
-| Dollars: tokens plus GPU seconds | from config | `incomplete_budget` |
+| Wall clock | 2 h on Max 5x, 4 h on Max 20x | `incomplete_budget` |
+| GPU dollars | from config | `incomplete_budget` |
 | Stall: identical failing set N consecutive runs | 5 | `incomplete_stuck` |
 
+Builder tokens are not metered in dollars because they bill to the subscription. The manager records token counts from the session for observability, and the wall-clock cap is the practical limit on subscription consumption.
+
 When `run_tests` reports all public tests passing, the manager ends the session. The builder does not decide it is done.
+
+**Subscription rate limits.** If the session fails with a rate-limit error from the subscription, the manager ends the run as `error` with reason `rate_limited`, preserving the workspace and build log as they stood. It does not retry, because the next window may be hours away and the daily schedule will run again tomorrow. The schedule time should be chosen so the run does not overlap the author's own interactive use.
 
 ### 9.4 Context management
 
@@ -241,10 +257,10 @@ Write `summary.md`: paper, claim, outcome, attempts used, dollars spent, inspect
 ## 12. Infrastructure
 
 - **Modal app** with one scheduled function (daily cron) running the manager. Sandboxes for builder and inspector created on demand.
-- **Secrets** in Modal: Anthropic API key, GitHub token for pushing `runs/`.
-- **Spend limit** on the Modal account set above the per-run budget as a hard ceiling.
-- **Models per role**, in config. Scout pass one: `claude-haiku-4-5`. Scout pass two, scoper, builder, inspector: `claude-opus-5-5` by default, with the inspector configurable to `claude-fable-5-1`.
-- **Rough cost per run:** low single-digit dollars in tokens plus low single-digit dollars of GPU. Per-run budget default: 15 USD.
+- **Secrets** in Modal: `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`), `OPENAI_API_KEY`, GitHub token for pushing `runs/`. `ANTHROPIC_API_KEY` is deliberately absent.
+- **Spend limit** on the Modal account set above the per-run budget as a hard ceiling for GPU cost.
+- **Models per role**, in config. Scout pass one: the cheapest current OpenAI model suitable for classification. Scout pass two, scoper, inspector: the strongest current OpenAI reasoning model. Exact IDs are chosen from OpenAI's model list at implementation time, not fixed here. Builder: whatever the Agent SDK defaults to under the subscription, overridable in config.
+- **Rough cost per run:** low single-digit dollars of OpenAI tokens plus low single-digit dollars of GPU, plus builder time against the subscription. Per-run GPU budget default: 10 USD.
 
 ## 13. Repository layout
 
@@ -257,10 +273,12 @@ paperloop/
     record.py          run record read/write
     caps.py            cap enforcement hooks
   agents/
-    scout/             prompt and tool list
-    scoper/
-    builder/
-    inspector/
+    scout/             prompts, OpenAI structured-output schemas
+    scoper/            prompts, OpenAI tool definitions for writing scope/ files
+    builder/           Agent SDK session config, allowed tools, hooks
+    inspector/         prompts, OpenAI tool definitions, verdict schema
+  llm/
+    openai_client.py   thin wrapper: model per role from config, retries, token accounting
   policies/
     select_v1_testability.py
   sandbox/
@@ -297,6 +315,7 @@ paperloop inspect --run runs/2026-09-30 --no-gpu
   - A workspace with hardcoded answers must receive a `hardcoded_result` flag.
   - A modified test file must produce `tests_tampered`.
   - A workspace passing public but failing hidden tests must produce `hidden_failed`.
+  - A simulated subscription rate-limit error during build must produce `error` with reason `rate_limited` and leave the workspace and build log intact.
 
 If any canary stops firing after a prompt change, the anti-gaming layer has regressed and the change is rejected.
 
@@ -307,7 +326,7 @@ Each step is usable on its own.
 1. Run record, LangGraph skeleton with stub nodes, local mode CLI, canary scope reaching `completed` with a hand-written builder stub.
 2. Fetch, scout, select against live arXiv in dry-run mode, scorecards logged.
 3. Scoper, stub check, feasibility check, freeze. Local only.
-4. Builder in a Modal sandbox with `run_tests`, `give_up`, and caps.
+4. Builder in a Modal sandbox via the Agent SDK under subscription auth, with `run_tests`, `give_up`, caps, and rate-limit handling.
 5. Inspector, verdict rule, adversarial canaries.
 6. Scheduled function, dashboard, push to `runs/` repo.
 

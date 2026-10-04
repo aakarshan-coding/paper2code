@@ -155,3 +155,16 @@ All five fixes came with tests that failed first. The suite went from 65 to 76 t
 - Should the spec's `tests_tampered` definition be widened to cover post-pass workspace drift? (Decided yes in practice; spec text not yet amended.)
 - Should the two anchor fields added to `run.json` be written into the spec's field list? (Same.)
 - Step 2 is the first step that spends OpenAI credits. Model choice per role is deferred to implementation time by the spec; it needs a look at current pricing before the plan is written.
+
+---
+
+## 2026-10-04: A sibling project, designloop
+
+While paper2code was paused after step 1, the author asked for an outreach-ready project for protein and AI-for-science startups, then asked for something more agent-shaped with a demo and metrics. The result is a separate repo at `../designloop`: an auditable benchmark of a tool-using design agent against baselines under an assay budget, on real deep mutational scanning data. Its full journal is in that repo's `decisions.md`.
+
+Why it belongs in this journal: it reuses paper2code's central ideas, and it taught lessons that apply here.
+
+- **The trust layer carried over.** A plan hashed before anything runs, metrics recomputed by the harness from a log, a pre-registered split, and an audit that catches edited or missing records. These are the same defenses the paper2code spec asks for, now exercised against an actual agent.
+- **Running an agent under a personal subscription needs lockdown.** A nested Agent SDK session loaded the account's connectors (mail, calendar, drive) as available tools. The designloop driver switches off built-in tools, uses strict MCP configuration, and aborts at startup if the session advertises any tool outside its own allowlist. **The step 4 builder should do the same.**
+- **The Windows launcher matters.** The SDK refuses `.cmd` shims and needs a native executable path.
+- **OpenAI credits were exhausted on the day.** The paper2code spec's hybrid split (OpenAI for scout, scoper and inspector) needs those credits topped up before steps 2, 3 and 5.

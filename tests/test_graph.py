@@ -120,3 +120,13 @@ def test_stage_exception_records_error_and_clears_on_success(tmp_path):
     assert RunRecord.load(rec.run_dir).error == RunError("build", "exception", "RuntimeError: boom in build")
     run_pipeline(rec.run_dir, _ctx(tmp_path), stages)
     assert RunRecord.load(rec.run_dir).error is None
+
+
+def test_until_stops_after_named_stage(tmp_path):
+    rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
+    calls = []
+    ctx = RunContext(config=Config(runs_root=tmp_path), until="select")
+    final = run_pipeline(rec.run_dir, ctx, _recording_stages(calls))
+    assert calls == ["fetch", "score", "select"]
+    assert final.stage == "select"
+    assert final.outcome is None

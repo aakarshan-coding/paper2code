@@ -19,6 +19,29 @@ class CapsConfig:
 
 
 @dataclass(frozen=True)
+class ModelPrice:
+    """USD per one million tokens."""
+
+    input_per_m: float
+    output_per_m: float
+
+
+DEFAULT_MODELS: dict[str, str] = {
+    "scout_pass1": "gpt-5.4-nano",
+    "scout_pass2": "gpt-5.5",
+    "scoper": "gpt-5.5",
+    "inspector": "gpt-5.5",
+    "builder": "",  # empty = Agent SDK default under the subscription
+}
+
+DEFAULT_PRICES: dict[str, ModelPrice] = {
+    "gpt-5.4-nano": ModelPrice(0.20, 1.25),
+    "gpt-5.4-mini": ModelPrice(0.75, 4.50),
+    "gpt-5.5": ModelPrice(5.00, 30.00),
+}
+
+
+@dataclass(frozen=True)
 class Config:
     runs_root: Path = Path("runs")
     categories: list[str] = field(default_factory=lambda: ["cs.LG", "cs.CL", "stat.ML"])
@@ -30,13 +53,22 @@ class Config:
     gpu_type: str = "T4"
     max_tier: str = "5x"
     policy: str = "select_v1_testability"
-    models: dict[str, str] = field(default_factory=dict)
+    models: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_MODELS))
+    prices: dict[str, ModelPrice] = field(default_factory=lambda: dict(DEFAULT_PRICES))
+    llm: str = "openai"  # "openai" or "fake"
+    pass_one_batch_size: int = 25
+    max_fulltext_chars: int = 80_000
+    shortlist_size: int = 3
+    gpu_usd_per_hour: float = 1.0
 
 
 def load_config(path: Path) -> Config:
-    """Load config.yaml. Missing keys fall back to the dataclass defaults."""
+    """Load config.yaml. Missing keys fall back to the dataclass defaults; dict keys merge over defaults."""
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     defaults = Config()
+    prices = dict(defaults.prices)
+    for model_id, p in (raw.get("prices") or {}).items():
+        prices[str(model_id)] = ModelPrice(input_per_m=float(p["input"]), output_per_m=float(p["output"]))
     return Config(
         runs_root=Path(raw.get("runs_root", defaults.runs_root)),
         categories=list(raw.get("categories", defaults.categories)),
@@ -48,5 +80,11 @@ def load_config(path: Path) -> Config:
         gpu_type=str(raw.get("gpu_type", defaults.gpu_type)),
         max_tier=str(raw.get("max_tier", defaults.max_tier)),
         policy=str(raw.get("policy", defaults.policy)),
-        models={k: str(v) for k, v in (raw.get("models") or {}).items()},
+        models={**defaults.models, **{k: str(v) for k, v in (raw.get("models") or {}).items()}},
+        prices=prices,
+        llm=str(raw.get("llm", defaults.llm)),
+        pass_one_batch_size=int(raw.get("pass_one_batch_size", defaults.pass_one_batch_size)),
+        max_fulltext_chars=int(raw.get("max_fulltext_chars", defaults.max_fulltext_chars)),
+        shortlist_size=int(raw.get("shortlist_size", defaults.shortlist_size)),
+        gpu_usd_per_hour=float(raw.get("gpu_usd_per_hour", defaults.gpu_usd_per_hour)),
     )

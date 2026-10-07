@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Mapping, TypedDict
+from typing import Any, Callable, Mapping, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
@@ -23,6 +23,10 @@ class RunContext:
     no_gpu: bool = True
     builder: str = "stub"
     reference_dir: Path | None = None
+    llm: str = "openai"  # "openai" or "fake"
+    until: str | None = None  # stop after this stage (dry run); None runs to the end
+    http: Any = None  # test injection: a PoliteClient; None builds one from config
+    chat_model: Any = None  # test injection: a ChatModel; None builds one from config
 
 
 StageFn = Callable[[RunRecord, RunContext], None]
@@ -52,6 +56,8 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
     def node(state: PipelineState) -> dict:
         record = RunRecord.load(Path(state["run_dir"]))
         if _should_skip(record, stage):
+            return {}
+        if ctx.until is not None and stage_index(stage) > stage_index(ctx.until):
             return {}
         if record.error is not None and record.error.reason == "exception":
             record.error = None  # a previous attempt crashed; this attempt starts clean

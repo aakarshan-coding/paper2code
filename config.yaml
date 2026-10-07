@@ -13,9 +13,18 @@ run_tests_timeout_s: 900
 gpu_type: T4
 max_tier: 5x
 policy: select_v1_testability
+llm: openai                 # openai | fake (fake = offline plumbing check, no API calls)
+pass_one_batch_size: 25     # abstracts per scout pass-one call
+max_fulltext_chars: 80000   # full text sent to pass two is cut here (~20k tokens)
+shortlist_size: 3
+gpu_usd_per_hour: 1.0       # used by the scout to turn est_gpu_hours into est_usd
 models:
-  scout_pass1: ""         # chosen at build step 2 from OpenAI's model list
-  scout_pass2: ""
-  scoper: ""
-  inspector: ""
-  builder: ""             # empty = Agent SDK default under the subscription
+  scout_pass1: gpt-5.4-nano   # cheapest classifier, hundreds of abstracts a day
+  scout_pass2: gpt-5.5        # strongest reasoning model, at most max_fulltext_candidates calls a day
+  scoper: gpt-5.5
+  inspector: gpt-5.5
+  builder: ""                 # empty = Agent SDK default under the subscription
+prices:                       # USD per 1M tokens, checked 2026-10-06
+  gpt-5.4-nano: {input: 0.20, output: 1.25}
+  gpt-5.4-mini: {input: 0.75, output: 4.50}
+  gpt-5.5: {input: 5.00, output: 30.00}

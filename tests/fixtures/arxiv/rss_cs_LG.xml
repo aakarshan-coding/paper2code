@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <channel>
+    <title>cs.LG updates on arXiv.org</title>
+    <link>https://rss.arxiv.org/rss/cs.LG</link>
+    <pubDate>Tue, 06 Oct 2026 00:00:00 -0400</pubDate>
+    <item>
+      <title>Bayes-Sufficient Compression Is Not Enough</title>
+      <link>https://arxiv.org/abs/2610.03769</link>
+      <description>arXiv:2610.03769v1 Announce Type: new
+Abstract: Multi-agent LLM systems pair a sender with broad context and an executor with a limited local view. We study when communication helps.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2610.03769v1</guid>
+      <category>cs.LG</category>
+      <category>cs.IT</category>
+      <pubDate>Tue, 06 Oct 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>new</arxiv:announce_type>
+      <dc:creator>Ada Lovelace, Charles Babbage</dc:creator>
+    </item>
+    <item>
+      <title>A Cross-Listed Paper</title>
+      <link>https://arxiv.org/abs/2610.03800</link>
+      <description>arXiv:2610.03800v1 Announce Type: cross
+Abstract: We propose a method and show it beats a baseline.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2610.03800v1</guid>
+      <category>stat.ML</category>
+      <category>cs.LG</category>
+      <pubDate>Tue, 06 Oct 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>cross</arxiv:announce_type>
+      <dc:creator>Grace Hopper</dc:creator>
+    </item>
+    <item>
+      <title>An Old Paper, Revised</title>
+      <link>https://arxiv.org/abs/2509.00001</link>
+      <description>arXiv:2509.00001v3 Announce Type: replace
+Abstract: Revised version.</description>
+      <guid isPermaLink="false">oai:arXiv.org:2509.00001v3</guid>
+      <category>cs.LG</category>
+      <pubDate>Tue, 06 Oct 2026 00:00:00 -0400</pubDate>
+      <arxiv:announce_type>replace</arxiv:announce_type>
+      <dc:creator>Alan Turing</dc:creator>
+    </item>
+  </channel>
+</rss>

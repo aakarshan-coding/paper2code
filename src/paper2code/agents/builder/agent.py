@@ -1,4 +1,30 @@
-"""Placeholder until Task 4 of the step 4a plan replaces this file."""
+"""The Agent SDK builder. Locked down: no built-in tools, strict MCP config, no user settings,
+an allowlist of six tools, a deny-by-default permission callback, and a startup check of the
+session's advertised tool list. The subscription token is used; any API key is blanked."""
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import shutil
+import tempfile
+import warnings
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any, Callable
+
+from paper2code.agents.builder.base import BuildContext
+from paper2code.agents.builder.prompts import SYSTEM_PROMPT, render_task
+from paper2code.agents.builder.tools import ALLOWED, SERVER, TOOL_SPECS, BuilderTools
+from paper2code.config import Config
+from paper2code.manager.buildlog import BuildLog
+from paper2code.manager.stages.build import BuildSession
+from paper2code.sandbox.workspace import LocalWorkspace
+
+warnings.filterwarnings("ignore", message="can_use_tool will not be invoked")
+
+NUDGE = "Continue. Call run_tests when you want the public suite run, or give_up if you cannot make progress."
+MAX_NUDGES = 3
 
 
 class AgentSessionError(RuntimeError):
@@ -7,3 +33,178 @@ class AgentSessionError(RuntimeError):
 
 class RateLimited(AgentSessionError):
     pass
+
+
+def find_cli() -> str | None:
+    """A native claude executable. The SDK refuses Windows .cmd shims."""
+    cand = os.environ.get("CLAUDE_CODE_EXECPATH")
+    if cand and Path(cand).exists() and not cand.lower().endswith((".cmd", ".bat")):
+        return cand
+    found = shutil.which("claude")
+    if found and not found.lower().endswith((".cmd", ".bat")):
+        return found
+    return None
+
+
+def _text(text: str, is_error: bool = False) -> dict:
+    return {"content": [{"type": "text", "text": text}], "is_error": is_error}
+
+
+def build_server(tools: BuilderTools):
+    from claude_agent_sdk import create_sdk_mcp_server, tool
+
+    sdk_tools = []
+    for spec in TOOL_SPECS:
+        def make(n: str, description: str, schema: dict):
+            @tool(n, description, schema)
+            async def handler(args, _n=n):
+                text, err = tools.call(_n, dict(args or {}))
+                return _text(text, err)
+
+            return handler
+
+        sdk_tools.append(make(spec["name"], spec["description"], spec["schema"]))
+    return create_sdk_mcp_server(name=SERVER, version="1.0.0", tools=sdk_tools)
+
+
+def build_options(tools: BuilderTools, config: Config, session: BuildSession, log: BuildLog, cwd: str):
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, PermissionResultAllow, PermissionResultDeny
+
+    async def can_use_tool(name, _input, _ctx):
+        if name in ALLOWED:
+            return PermissionResultAllow()
+        return PermissionResultDeny(message="Only the builder's six tools are available.", interrupt=False)
+
+    async def refuse_after_end(input_data, tool_use_id, _context):
+        session.check_wall_clock()
+        if session.finished:
+            log.append({"event": "tool_refused", "tool": input_data.get("tool_name"), "reason": session.finish_reason})
+            return {"hookSpecificOutput": {
+                "hookEventName": "PreToolUse", "permissionDecision": "deny",
+                "permissionDecisionReason": f"The session is over: {session.finish_reason}.",
+            }}
+        return {}
+
+    async def on_compact(input_data, tool_use_id, _context):
+        failing = sorted(session.failing_history[-1]) if session.failing_history else []
+        log.append({"event": "compaction", "trigger": input_data.get("trigger"), "failing": failing,
+                    "attempts": len(session.failing_history)})
+        return {}
+
+    model = config.models.get("builder") or None
+    return ClaudeAgentOptions(
+        model=model,
+        system_prompt=SYSTEM_PROMPT,
+        mcp_servers={SERVER: build_server(tools)},
+        strict_mcp_config=True,
+        tools=[],
+        allowed_tools=ALLOWED,
+        can_use_tool=can_use_tool,
+        permission_mode="default",
+        setting_sources=[],
+        max_turns=config.builder_max_turns,
+        cwd=cwd,
+        env={"ANTHROPIC_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""},
+        cli_path=find_cli(),
+        hooks={
+            "PreToolUse": [HookMatcher(hooks=[refuse_after_end])],
+            "PreCompact": [HookMatcher(hooks=[on_compact])],
+        },
+    )
+
+
+def _default_client_factory():
+    from claude_agent_sdk import ClaudeSDKClient
+
+    @asynccontextmanager
+    async def make(options):
+        async with ClaudeSDKClient(options=options) as client:
+            yield client
+
+    return make
+
+
+async def drive(prompt: str, session: BuildSession, options, client_factory, log: BuildLog) -> dict:
+    from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, SystemMessage, TextBlock
+
+    usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "total_cost_usd": None, "num_turns": 0}
+    nudges = 0
+    async with client_factory(options) as client:
+        await client.query(prompt)
+        while True:
+            async for msg in client.receive_response():
+                if isinstance(msg, SystemMessage) and msg.subtype == "init":
+                    visible = list((msg.data or {}).get("tools", []))
+                    extra = [t for t in visible if t not in ALLOWED]
+                    if extra:
+                        raise AgentSessionError(f"session exposes tools outside the allowlist: {extra[:5]}")
+                    log.append({"event": "session_init", "tools": visible})
+                elif isinstance(msg, RateLimitEvent):
+                    info = msg.rate_limit_info
+                    if getattr(info, "status", "allowed") == "rejected":
+                        log.append({"event": "rate_limited", "type": getattr(info, "rate_limit_type", None)})
+                        raise RateLimited("subscription rate limit reached")
+                elif isinstance(msg, AssistantMessage):
+                    for block in msg.content or []:
+                        if isinstance(block, TextBlock) and block.text.strip():
+                            log.append({"event": "assistant_text", "text": block.text.strip()[:1500]})
+                elif isinstance(msg, ResultMessage):
+                    u = msg.usage or {}
+                    usage["input_tokens"] += int(u.get("input_tokens") or 0)
+                    usage["output_tokens"] += int(u.get("output_tokens") or 0)
+                    usage["total_cost_usd"] = msg.total_cost_usd
+                    usage["num_turns"] += int(msg.num_turns or 0)
+                    log.append({
+                        "event": "usage", "input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                        "total_cost_usd": msg.total_cost_usd, "num_turns": msg.num_turns, "duration_ms": msg.duration_ms,
+                        "subtype": msg.subtype,
+                    })
+                    if msg.is_error and not session.finished:
+                        raise AgentSessionError(f"agent session ended with an error: {msg.subtype}")
+            if session.finished or nudges >= MAX_NUDGES:
+                break
+            nudges += 1
+            await client.query(NUDGE)
+    usage["nudges"] = nudges
+    return usage
+
+
+def _module_name(interface_md: str) -> str:
+    m = re.search(r"Module `(\w+)`", interface_md)
+    return m.group(1) if m else "solution"
+
+
+class AgentBuilder:
+    def __init__(self, config: Config, client_factory: Callable | None = None, workspace_factory=LocalWorkspace) -> None:
+        self.config = config
+        self.client_factory = client_factory or _default_client_factory()
+        self.workspace_factory = workspace_factory
+        self.on_tools_ready: Callable[[BuilderTools], None] | None = None  # test hook
+
+    def build(self, ctx: BuildContext) -> None:
+        session: BuildSession = ctx.session
+        log = session.log
+        workspace = self.workspace_factory(ctx.workspace)
+        tools = BuilderTools(session, workspace, log, self.config.builder_tool_timeout_s)
+        if self.on_tools_ready:
+            self.on_tools_ready(tools)
+        public_tests = {p.name: p.read_text(encoding="utf-8") for p in sorted(ctx.public_tests.glob("test_*.py"))}
+        interface_md = ctx.interface_path.read_text(encoding="utf-8")
+        module = _module_name(interface_md)
+        caps = session.record.caps
+        caps_text = (
+            f"{caps.test_runs} test runs, {caps.wall_clock_s / 3600:.1f} hours, "
+            f"{session.record.budget.limit_usd:.2f} USD of GPU"
+        )
+        prompt = render_task(
+            ctx.spec_path.read_text(encoding="utf-8"), interface_md, public_tests, module,
+            self.config.allowed_packages, caps_text,
+        )
+        scratch = tempfile.mkdtemp(prefix="p2c-agent-")
+        try:
+            options = build_options(tools, self.config, session, log, cwd=scratch)
+            usage = asyncio.run(drive(prompt, session, options, self.client_factory, log))
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        session.record.budget.spent_tokens += usage["input_tokens"] + usage["output_tokens"]
+        session.record.save()

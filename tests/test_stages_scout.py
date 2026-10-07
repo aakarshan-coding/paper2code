@@ -177,13 +177,14 @@ def test_select_over_budget_is_no_candidates(tmp_path):
 
 
 def test_fake_llm_name_builds_fake_model(tmp_path):
+    from paper2code.agents.fake import fake_agent_responder
     from paper2code.llm.factory import make_chat_model
     from paper2code.llm.fake import FakeChatModel as Fake
 
     ctx = RunContext(config=Config(runs_root=tmp_path), llm="fake")
     model = make_chat_model(ctx)
     assert isinstance(model, Fake)
-    assert model.responder is fake_scout_responder
+    assert model.responder is fake_agent_responder
     with pytest.raises(ValueError, match="unknown llm"):
         make_chat_model(RunContext(config=Config(runs_root=tmp_path), llm="gemini"))
 

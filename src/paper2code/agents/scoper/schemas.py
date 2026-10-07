@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import re
+from typing import ClassVar
 
 from pydantic import BaseModel
 
@@ -33,6 +34,8 @@ class InterfaceSpec(BaseModel):
 
 
 class TestFile(BaseModel):
+    __test__: ClassVar[bool] = False  # not a pytest test class despite the name
+
     path: str  # flat file name, test_*.py
     content: str
 

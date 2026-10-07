@@ -12,8 +12,8 @@ def make_chat_model(ctx) -> ChatModel:
 
         return OpenAIChatModel(ctx.config.models, ctx.config.prices)
     if ctx.llm == "fake":
-        from paper2code.agents.scout.fake import fake_scout_responder
+        from paper2code.agents.fake import fake_agent_responder
         from paper2code.llm.fake import FakeChatModel
 
-        return FakeChatModel(fake_scout_responder)
+        return FakeChatModel(fake_agent_responder)
     raise ValueError(f"unknown llm {ctx.llm!r}; expected 'openai' or 'fake'")

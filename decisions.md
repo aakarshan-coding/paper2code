@@ -376,3 +376,20 @@ The fresh reviewer re-ran the suite, probed the local workspace with scratch scr
 ### Lesson worth a blog paragraph
 
 The critical finding is a reminder that "I set a timeout" and "the thing stops" are different claims, and the gap between them is platform-specific. The timeout killed exactly one process; everything that process had started kept going. Caps are structural defenses only if the thing they cap can actually be stopped, which means the enforcement has to reach every process the agent can spawn, not just the first one.
+
+## 2026-10-07: Step 4b plan, the Modal sandbox and GPU test runner
+
+Step 4a left the agent working in a directory on this machine. Step 4b moves two things into the cloud and leaves everything else where it is.
+
+**What moves.** The agent's workspace becomes a Modal sandbox: a fresh Linux container with Python and the allowed packages, no secrets, and outbound network limited to the package index plus any hosts named in the paper's spec. The agent's four file and shell tools are proxied into that container, so a shell command it runs cannot touch this machine at all. Every test run becomes a call to a deployed Modal function on a GPU: the manager takes a snapshot of the sandbox's workspace, bundles it with the tests, and sends the bundle to the function, which runs pytest exactly the way the local runner does and sends back the result. The hidden tests ride inside that bundle and are never present where the agent works. The function's wall time is the GPU charge the budget cap counts.
+
+**What stays.** The Agent SDK session, the subscription login, and the Modal token all stay on the manager's machine. The inspector's hidden-test run uses the same GPU function pointed at the hidden suite. `--no-gpu` keeps the whole step 4a local path.
+
+**Decisions made while planning.**
+
+- The test-running logic is written once as a pure function of (bundle bytes, timeout) and unit-tested locally; the Modal function is a two-line wrapper around it. The alternative, testing only through Modal, would have made the unit suite depend on the cloud.
+- The sandbox is created at the start of the build stage and destroyed at the end, whatever the exit. The workspace is exported back into the run directory first, so a resumed run seeds its new sandbox from the previous attempt's work. A sandbox that dies mid-session is an infrastructure error (`sandbox_failed`), not the builder's failure.
+- Bundles bigger than a configured size (50 MB) are refused with a message the agent can read, so a dataset or a virtual environment in the workspace cannot turn into a multi-gigabyte upload on every test run.
+- The GPU type and the function timeout are fixed at deploy time from environment variables. Changing the GPU is a redeploy, not a code change.
+- The builder's image installs the CPU build of PyTorch to stay small; the test image installs the default build so CUDA is available on the GPU.
+- A live probe against the real account before planning confirmed every API call the plan relies on: sandbox creation in about 1.5 seconds, exec with a timeout, file reads and writes, the domain allowlist blocking a non-listed host, termination.

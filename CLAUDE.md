@@ -89,6 +89,10 @@ script with the Write tool and run that.
 Explanations are written for clarity and continuity. The reader is following a long project
 across many sessions and wants to understand what happened and why, not decode a changelog.
 
+Assume the reader understands the project technically, but does NOT necessarily remember every experiment ID,
+implementation detail, previous debugging decision, or piece of terminology from earlier in the session. 
+
+
 - Prefer complete, conversational technical explanations over compressed changelog prose. Say
   what changed, why it was needed, what it means for the next step, and what was decided along
   the way, in full sentences.

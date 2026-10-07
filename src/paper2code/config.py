@@ -60,6 +60,7 @@ class Config:
     max_fulltext_chars: int = 80_000
     shortlist_size: int = 3
     gpu_usd_per_hour: float = 1.0
+    allowed_packages: list[str] = field(default_factory=lambda: ["numpy", "torch", "scipy", "scikit-learn"])
 
 
 def load_config(path: Path) -> Config:
@@ -87,4 +88,5 @@ def load_config(path: Path) -> Config:
         max_fulltext_chars=int(raw.get("max_fulltext_chars", defaults.max_fulltext_chars)),
         shortlist_size=int(raw.get("shortlist_size", defaults.shortlist_size)),
         gpu_usd_per_hour=float(raw.get("gpu_usd_per_hour", defaults.gpu_usd_per_hour)),
+        allowed_packages=list(raw.get("allowed_packages", defaults.allowed_packages)),
     )

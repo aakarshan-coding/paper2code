@@ -7,7 +7,7 @@ from pathlib import Path
 
 from paper2code.arxiv.models import ArxivPaper
 from paper2code.config import Config
-from paper2code.manager.freeze import manifest_sha256, write_manifest
+from paper2code.manager.freeze import freeze_scope
 from paper2code.manager.record import Caps, Paper, RunRecord, create_run
 
 
@@ -22,8 +22,7 @@ def init_run(runs_root: Path, scope_src: Path, paper: Paper, today: date, config
     shutil.copytree(
         scope_src, record.run_dir / "scope", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".pytest_cache"),
     )
-    write_manifest(record.run_dir / "scope")
-    record.scope_manifest_sha256 = manifest_sha256(record.run_dir / "scope")
+    freeze_scope(record)
     record.paper = paper
     record.stage = "scope"
     record.save()

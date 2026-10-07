@@ -44,6 +44,7 @@ class TestRunResult:
     gpu_seconds: float
     output: str
     workspace_sha256: str = ""  # tree_digest of the snapshot that was tested
+    errored: tuple[str, ...] = ()  # collection/setup errors; a subset of `failed`
 
     @property
     def all_passed(self) -> bool:
@@ -74,6 +75,16 @@ def parse_junit(path: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
         else:
             passed.append(test_id)
     return tuple(passed), tuple(failed)
+
+
+def parse_junit_errors(path: Path) -> tuple[str, ...]:
+    """Test ids whose JUnit entry is an <error> (collection or setup failure), not a <failure>."""
+    root = ET.parse(path).getroot()
+    return tuple(
+        f"{tc.get('classname', '')}::{tc.get('name', '')}"
+        for tc in root.iter("testcase")
+        if any(child.tag == "error" for child in tc)
+    )
 
 
 class LocalTestRunner:
@@ -112,6 +123,7 @@ class LocalTestRunner:
                 return TestRunResult((), (), -1, True, time.monotonic() - start, 0.0, output, digest)
             duration = time.monotonic() - start
             passed, failed = parse_junit(report) if report.exists() else ((), ())
+            errored = parse_junit_errors(report) if report.exists() else ()
             return TestRunResult(
-                passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr, digest,
+                passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr, digest, errored,
             )

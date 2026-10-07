@@ -28,3 +28,5 @@ prices:                       # USD per 1M tokens, checked 2026-10-06
   gpt-5.4-nano: {input: 0.20, output: 1.25}
   gpt-5.4-mini: {input: 0.75, output: 4.50}
   gpt-5.5: {input: 5.00, output: 30.00}
+
+allowed_packages: [numpy, torch, scipy, scikit-learn]   # what scoped tests and builder code may import; the stub check runs locally

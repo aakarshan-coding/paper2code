@@ -68,3 +68,10 @@ def test_pyproject_declares_runtime_dependencies():
     deps = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
     names = {d.split(">=")[0].split("==")[0].strip() for d in deps}
     assert {"openai", "httpx", "pydantic", "pypdf", "langgraph", "pyyaml"} <= names
+
+
+def test_allowed_packages_default_and_override(tmp_path):
+    assert Config().allowed_packages == ["numpy", "torch", "scipy", "scikit-learn"]
+    p = tmp_path / "c.yaml"
+    p.write_text("allowed_packages: [numpy]\n", encoding="utf-8")
+    assert load_config(p).allowed_packages == ["numpy"]

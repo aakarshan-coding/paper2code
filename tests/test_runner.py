@@ -141,3 +141,24 @@ def test_result_carries_snapshot_digest(tmp_path):
     _write(tests / "test_mod.py", "from mod import X\ndef test_x(): assert X == 1\n")
     result = LocalTestRunner(timeout_s=60).run(ws, tests)
     assert result.workspace_sha256 == tree_digest(hash_tree(ws))
+
+
+def test_collection_error_is_reported_as_errored(tmp_path):
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    _write(ws / "stub.py", "def f(x):\n    raise NotImplementedError\n")
+    _write(tests / "test_bad.py", "from stub import g\ndef test_b(): assert g(1) == 2\n")
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.errored == ("::test_bad",)
+    assert result.failed == ("::test_bad",)
+    assert result.all_passed is False
+
+
+def test_not_implemented_is_a_failure_not_an_error(tmp_path):
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    _write(ws / "stub.py", "def f(x):\n    raise NotImplementedError\n")
+    _write(tests / "test_ok.py", "from stub import f\ndef test_a(): assert f(1) == 2\n")
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.errored == ()
+    assert result.failed == ("test_ok::test_a",)

@@ -99,3 +99,18 @@ def test_tree_digest_is_stable_and_sensitive(tmp_path):
     assert d1 == tree_digest(hash_tree(scope))
     (scope / "spec.md").write_text("spec2", encoding="utf-8")
     assert tree_digest(hash_tree(scope)) != d1
+
+
+def test_freeze_scope_writes_manifest_and_anchor(tmp_path):
+    from datetime import date
+
+    from paper2code.manager.freeze import freeze_scope
+    from paper2code.manager.record import Caps, create_run
+
+    rec = create_run(tmp_path, date(2026, 10, 7), Caps(), 10.0)
+    (rec.run_dir / "scope").mkdir()
+    _make_scope(rec.run_dir / "scope")
+    manifest = freeze_scope(rec)
+    assert set(manifest) == {"spec.md", "tests/public/test_a.py", "tests/hidden/test_h.py"}
+    assert rec.scope_manifest_sha256 == manifest_sha256(rec.run_dir / "scope")
+    assert verify_manifest(rec.run_dir / "scope", rec.scope_manifest_sha256) == []

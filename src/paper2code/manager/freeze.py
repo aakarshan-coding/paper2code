@@ -57,6 +57,17 @@ def manifest_sha256(scope_dir: Path) -> str:
     return _sha256(scope_dir / MANIFEST_NAME)
 
 
+def freeze_scope(record) -> dict[str, str]:
+    """Hash scope/ into manifest.json and anchor the manifest's own hash in the run record.
+
+    After this call no agent session may write scope/; the inspector re-hashes against the anchor.
+    """
+    scope_dir = record.run_dir / "scope"
+    manifest = write_manifest(scope_dir)
+    record.scope_manifest_sha256 = manifest_sha256(scope_dir)
+    return manifest
+
+
 def verify_manifest(scope_dir: Path, expected_manifest_sha256: str | None = None) -> list[str]:
     """Relative paths whose hash differs from the manifest, plus added and missing files. Empty means intact.
 

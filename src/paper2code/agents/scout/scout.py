@@ -4,7 +4,7 @@ from __future__ import annotations
 from paper2code.agents.scout.prompts import PASS_ONE_INSTRUCTIONS, PASS_TWO_INSTRUCTIONS, render_pass_one_batch, render_pass_two
 from paper2code.agents.scout.schemas import DIFFICULTIES, REJECTION_REASONS, SCORING_ERROR, EligibilityBatch, EligibilityVerdict, Scorecard
 from paper2code.arxiv.models import ArxivPaper
-from paper2code.llm.base import ChatModel, Usage
+from paper2code.llm.base import ChatModel, LLMBadOutput, Usage
 
 ROLE_PASS_ONE = "scout_pass1"
 ROLE_PASS_TWO = "scout_pass2"
@@ -24,9 +24,14 @@ def pass_one(papers: list[ArxivPaper], llm: ChatModel, batch_size: int, usage: U
     verdicts: list[EligibilityVerdict] = []
     for start in range(0, len(papers), batch_size):
         batch = papers[start:start + batch_size]
-        result = llm.parse(ROLE_PASS_ONE, PASS_ONE_INSTRUCTIONS, render_pass_one_batch(batch), EligibilityBatch)
-        usage.add(result)
-        by_id = {v.arxiv_id: v for v in result.value.verdicts}
+        try:
+            result = llm.parse(ROLE_PASS_ONE, PASS_ONE_INSTRUCTIONS, render_pass_one_batch(batch), EligibilityBatch)
+        except LLMBadOutput:
+            # The model answered unusably for this batch; grade nothing here, keep going.
+            by_id: dict[str, EligibilityVerdict] = {}
+        else:
+            usage.add(result)
+            by_id = {v.arxiv_id: v for v in result.value.verdicts}
         for paper in batch:
             v = by_id.get(paper.arxiv_id)
             if v is None:

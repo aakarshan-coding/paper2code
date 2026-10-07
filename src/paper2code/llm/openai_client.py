@@ -4,9 +4,10 @@ from __future__ import annotations
 from typing import Mapping
 
 import openai
+from pydantic import ValidationError
 
 from paper2code.config import ModelPrice
-from paper2code.llm.base import LLMError, LLMResult, T, cost_usd
+from paper2code.llm.base import LLMBadOutput, LLMError, LLMResult, T, cost_usd
 
 
 class OpenAIChatModel:
@@ -28,11 +29,13 @@ class OpenAIChatModel:
         model = self.models[role]
         try:
             resp = self.client.responses.parse(model=model, instructions=instructions, input=user, text_format=schema)
+        except ValidationError as exc:
+            raise LLMBadOutput(f"{model} ({role}): output failed schema validation: {exc}") from exc
         except openai.OpenAIError as exc:
             raise LLMError(f"{model} ({role}): {exc}") from exc
         value = getattr(resp, "output_parsed", None)
         if value is None:
-            raise LLMError(f"{model} ({role}): no parsed output (refusal or empty response)")
+            raise LLMBadOutput(f"{model} ({role}): no parsed output (refusal or empty response)")
         usage = resp.usage
         input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
         output_tokens = int(getattr(usage, "output_tokens", 0) or 0)

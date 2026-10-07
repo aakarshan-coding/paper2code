@@ -40,16 +40,22 @@ class PoliteClient:
         self._last_request_at = time.monotonic()
 
     def get(self, url: str, params: dict | None = None) -> httpx.Response:
-        last_status = None
+        """GET with backoff. Retries 429/503 and transport errors (timeouts, connection resets);
+        any other status is returned as is for the caller to judge."""
+        last_failure = "no attempt made"
         for attempt in range(self.max_attempts):
             self._wait_turn()
-            resp = self.client.get(url, params=params, headers={"User-Agent": self.user_agent}, follow_redirects=True)
-            if resp.status_code not in RETRY_STATUSES:
-                return resp
-            last_status = resp.status_code
+            try:
+                resp = self.client.get(url, params=params, headers={"User-Agent": self.user_agent}, follow_redirects=True)
+            except httpx.TransportError as exc:
+                last_failure = f"{type(exc).__name__}: {exc}"
+            else:
+                if resp.status_code not in RETRY_STATUSES:
+                    return resp
+                last_failure = str(resp.status_code)
             if attempt < self.max_attempts - 1:
                 self.sleep(BACKOFF_S[min(attempt, len(BACKOFF_S) - 1)])
-        raise ArxivUnavailable(f"{url}: {last_status} after {self.max_attempts} attempts")
+        raise ArxivUnavailable(f"{url}: {last_failure} after {self.max_attempts} attempts")
 
 
 def make_polite_client(ctx) -> PoliteClient:

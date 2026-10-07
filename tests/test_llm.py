@@ -98,3 +98,21 @@ def test_fake_chat_model_records_calls_and_costs_nothing():
     assert r.model == "fake" and r.cost_usd == 0.0
     assert r.input_tokens == len("hello") // 4
     assert fake.calls == [("scout_pass1", "hello", Answer)]
+
+
+def test_openai_bad_output_is_a_distinct_error_class():
+    from pydantic import ValidationError
+
+    from paper2code.llm.base import LLMBadOutput
+
+    assert issubclass(LLMBadOutput, LLMError)
+    llm = OpenAIChatModel(MODELS, PRICES, client=_stub_client(_StubResponses(None)))
+    with pytest.raises(LLMBadOutput):
+        llm.parse("scout_pass1", "", "x", Answer)
+    try:
+        Answer(ok="not-a-bool-at-all", note=1.5)  # type: ignore[arg-type]
+    except ValidationError as exc:
+        verr = exc
+    llm = OpenAIChatModel(MODELS, PRICES, client=_stub_client(_StubResponses(None, raise_exc=verr)))
+    with pytest.raises(LLMBadOutput, match="validation"):
+        llm.parse("scout_pass1", "", "x", Answer)

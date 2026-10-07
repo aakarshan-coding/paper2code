@@ -186,3 +186,122 @@ def test_fake_llm_name_builds_fake_model(tmp_path):
     assert model.responder is fake_scout_responder
     with pytest.raises(ValueError, match="unknown llm"):
         make_chat_model(RunContext(config=Config(runs_root=tmp_path), llm="gemini"))
+
+
+def test_score_resume_after_crash_does_not_duplicate_rows(tmp_path):
+    rec = _new_run(tmp_path)
+    base = _scout({"2610.03769", "2610.03800", "2610.03727"}, {"2610.03800": 5})
+    orig = base.responder
+    calls = {"cards": 0}
+
+    def responder(role, instructions, user, schema):
+        if schema is Scorecard:
+            calls["cards"] += 1
+            if calls["cards"] == 2:
+                raise RuntimeError("network blip")
+        return orig(role, instructions, user, schema)
+
+    llm = FakeChatModel(responder)
+    ctx = _ctx(tmp_path, llm=llm)
+    run_stage("fetch", rec.run_dir, ctx)
+    with pytest.raises(RuntimeError, match="network blip"):
+        run_stage("score", rec.run_dir, ctx)
+    pass_one_calls = len([c for c in llm.calls if c[2] is EligibilityBatch])
+    final = run_stage("score", rec.run_dir, ctx)
+    assert final.stage == "score" and final.outcome is None
+    rows = candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE)
+    p1 = [r["arxiv_id"] for r in rows if r["pass"] == 1]
+    p2 = [r["arxiv_id"] for r in rows if r["pass"] == 2]
+    assert sorted(p1) == ["2610.03727", "2610.03769", "2610.03800"]
+    assert sorted(p2) == ["2610.03727", "2610.03769", "2610.03800"]
+    assert len([c for c in llm.calls if c[2] is EligibilityBatch]) == pass_one_calls  # pass one not re-billed
+    assert calls["cards"] == 4  # 1 scored + 1 crashed, then the 2 remaining
+    run_stage("select", rec.run_dir, ctx)
+    shortlist = json.loads((rec.run_dir / SELECTED_FILE).read_text(encoding="utf-8"))["shortlist"]
+    assert len({c["arxiv_id"] for c in shortlist}) == len(shortlist) == 3
+
+
+def test_select_keeps_one_row_per_paper(tmp_path):
+    rec = _new_run(tmp_path)
+    rec.stage = "score"
+    rec.save()
+    row = {"pass": 2, "arxiv_id": "2610.03769", "title": "T", "testability": 4, "est_usd": 0.5, "difficulty": "easy"}
+    candidates.append_rows(rec.run_dir / candidates.CANDIDATES_FILE, [row, {**row, "testability": 5}])
+    run_stage("select", rec.run_dir, _ctx(tmp_path))
+    shortlist = json.loads((rec.run_dir / SELECTED_FILE).read_text(encoding="utf-8"))["shortlist"]
+    assert [c["arxiv_id"] for c in shortlist] == ["2610.03769"]
+    assert shortlist[0]["testability"] == 5  # last row wins
+
+
+def test_score_api_error_does_not_mark_papers_seen(tmp_path):
+    rec = _new_run(tmp_path)
+
+    def responder(role, instructions, user, schema):
+        raise LLMError("You have no credits remaining.")
+
+    ctx = _ctx(tmp_path, llm=FakeChatModel(responder))
+    run_stage("fetch", rec.run_dir, ctx)
+    final = run_stage("score", rec.run_dir, ctx)
+    assert final.outcome is Outcome.ERROR and final.error.reason == "api_error"
+    assert load_seen(tmp_path) == set()
+    assert candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE) == []
+
+
+def test_score_scoring_error_papers_are_not_marked_seen(tmp_path):
+    rec = _new_run(tmp_path)
+
+    def responder(role, instructions, user, schema):
+        if schema is EligibilityBatch:
+            ids = [line.split(None, 1)[1].strip() for line in user.splitlines() if line.startswith("ID:")]
+            return EligibilityBatch(verdicts=[EligibilityVerdict(arxiv_id=i, eligible=False, reason="not_a_method", confidence=0.1) for i in ids if i != "2610.03800"])
+        raise AssertionError("no pass two expected")
+
+    ctx = _ctx(tmp_path, llm=FakeChatModel(responder))
+    run_stage("fetch", rec.run_dir, ctx)
+    run_stage("score", rec.run_dir, ctx)
+    assert load_seen(tmp_path) == {"2610.03769", "2610.03727"}
+
+
+def test_score_transport_error_on_fulltext_yields_error_row(tmp_path):
+    def handler(request):
+        url = str(request.url)
+        if url == RSS_URL.format(category="cs.LG"):
+            return httpx.Response(200, content=(FIX / "rss_cs_LG.xml").read_bytes(), request=request)
+        if url == RSS_URL.format(category="stat.ML"):
+            return httpx.Response(200, content=(FIX / "rss_stat_ML.xml").read_bytes(), request=request)
+        if "2610.03769" in url:
+            raise httpx.ReadTimeout("slow", request=request)
+        if "/html/" in url:
+            return httpx.Response(200, content=(FIX / "paper.html").read_bytes(), request=request)
+        return httpx.Response(404, request=request)
+
+    http = PoliteClient(client=httpx.Client(transport=httpx.MockTransport(handler)), min_interval_s=0.0, max_attempts=2, sleep=lambda s: None)
+    rec = _new_run(tmp_path)
+    ctx = _ctx(tmp_path, http=http, llm=_scout({"2610.03769", "2610.03727"}))
+    run_stage("fetch", rec.run_dir, ctx)
+    final = run_stage("score", rec.run_dir, ctx)
+    assert final.outcome is None
+    p2 = {r["arxiv_id"]: r for r in candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE) if r["pass"] == 2}
+    assert p2["2610.03769"]["error"].startswith("fulltext_unavailable")
+    assert p2["2610.03727"]["testability"] == 3
+
+
+def test_score_bad_model_output_on_one_paper_yields_error_row(tmp_path):
+    from paper2code.llm.base import LLMBadOutput
+
+    base = _scout({"2610.03769", "2610.03727"})
+    orig = base.responder
+
+    def responder(role, instructions, user, schema):
+        if schema is Scorecard and user.startswith("ID: 2610.03769"):
+            raise LLMBadOutput("refusal")
+        return orig(role, instructions, user, schema)
+
+    rec = _new_run(tmp_path)
+    ctx = _ctx(tmp_path, llm=FakeChatModel(responder))
+    run_stage("fetch", rec.run_dir, ctx)
+    final = run_stage("score", rec.run_dir, ctx)
+    assert final.outcome is None
+    p2 = {r["arxiv_id"]: r for r in candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE) if r["pass"] == 2}
+    assert p2["2610.03769"]["error"].startswith("scoring_error")
+    assert p2["2610.03727"]["testability"] == 3

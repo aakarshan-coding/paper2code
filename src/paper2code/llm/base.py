@@ -12,7 +12,12 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class LLMError(Exception):
-    """The provider failed: quota exhausted, network, refusal, or unparseable output."""
+    """The provider failed: quota exhausted, auth, network, or a server error. Treat as an outage."""
+
+
+class LLMBadOutput(LLMError):
+    """The provider answered but the answer is unusable for this one call: refusal, empty
+    output, or a response that fails schema validation. Callers may skip the item and go on."""
 
 
 @dataclass(frozen=True)

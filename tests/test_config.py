@@ -60,3 +60,11 @@ def test_prices_yaml_override_merges_with_defaults(tmp_path):
     assert cfg.prices["gpt-5.5"].input_per_m == 5.0  # defaults kept
     assert cfg.models["scout_pass2"] == "gpt-5.4-mini"
     assert cfg.models["scout_pass1"] == "gpt-5.4-nano"  # defaults kept
+
+
+def test_pyproject_declares_runtime_dependencies():
+    import tomllib
+
+    deps = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["dependencies"]
+    names = {d.split(">=")[0].split("==")[0].strip() for d in deps}
+    assert {"openai", "httpx", "pydantic", "pypdf", "langgraph", "pyyaml"} <= names

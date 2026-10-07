@@ -118,3 +118,28 @@ def test_polite_client_sends_contact_user_agent():
     client.get("https://example.invalid/a")
     assert seen["ua"].startswith("paper2code/")
     assert "me@example.org" in seen["ua"]
+
+
+def test_polite_client_retries_transport_errors():
+    sleeps = []
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise httpx.ReadTimeout("slow", request=request)
+        return httpx.Response(200, content=b"ok", request=request)
+
+    client = PoliteClient(client=httpx.Client(transport=httpx.MockTransport(handler)), min_interval_s=0.0, sleep=sleeps.append)
+    assert client.get("https://example.invalid/x").status_code == 200
+    assert calls["n"] == 3
+    assert sleeps == [5.0, 10.0]
+
+
+def test_polite_client_gives_up_on_persistent_transport_error():
+    def handler(request):
+        raise httpx.ConnectError("down", request=request)
+
+    client = PoliteClient(client=httpx.Client(transport=httpx.MockTransport(handler)), min_interval_s=0.0, max_attempts=2, sleep=lambda s: None)
+    with pytest.raises(ArxivUnavailable, match="ConnectError"):
+        client.get("https://example.invalid/x")

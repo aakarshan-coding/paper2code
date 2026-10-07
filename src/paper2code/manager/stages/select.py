@@ -13,7 +13,12 @@ SELECTED_FILE = "selected.json"
 
 
 def run(record: RunRecord, ctx: RunContext) -> None:
-    rows = [r for r in candidates.read_rows(record.run_dir / candidates.CANDIDATES_FILE) if r.get("pass") == 2]
+    # One row per paper, last wins: a resumed score stage may have appended twice.
+    latest: dict[str, dict] = {}
+    for r in candidates.read_rows(record.run_dir / candidates.CANDIDATES_FILE):
+        if r.get("pass") == 2:
+            latest[r["arxiv_id"]] = r
+    rows = list(latest.values())
     policy = get_policy(ctx.config.policy)
     shortlist = policy.select(rows, limit_usd=record.budget.limit_usd, k=ctx.config.shortlist_size)
     (record.run_dir / SELECTED_FILE).write_text(

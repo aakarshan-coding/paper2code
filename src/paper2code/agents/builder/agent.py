@@ -18,13 +18,13 @@ from paper2code.agents.builder.prompts import SYSTEM_PROMPT, render_task
 from paper2code.agents.builder.tools import ALLOWED, SERVER, TOOL_SPECS, BuilderTools
 from paper2code.config import Config
 from paper2code.manager.buildlog import BuildLog
+from paper2code.manager.caps import MAX_TURNS_CAP
 from paper2code.manager.stages.build import BuildSession
 from paper2code.sandbox.workspace import LocalWorkspace
 
-warnings.filterwarnings("ignore", message="can_use_tool will not be invoked")
-
 NUDGE = "Continue. Call run_tests when you want the public suite run, or give_up if you cannot make progress."
 MAX_NUDGES = 3
+_USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
 
 
 class AgentSessionError(RuntimeError):
@@ -58,7 +58,9 @@ def build_server(tools: BuilderTools):
         def make(n: str, description: str, schema: dict):
             @tool(n, description, schema)
             async def handler(args, _n=n):
-                text, err = tools.call(_n, dict(args or {}))
+                # Tool work (a shell command, a test run) can take minutes; keep the event loop free so
+                # hooks, the SDK reader and interrupt() keep working meanwhile.
+                text, err = await asyncio.to_thread(tools.call, _n, dict(args or {}))
                 return _text(text, err)
 
             return handler
@@ -68,7 +70,7 @@ def build_server(tools: BuilderTools):
 
 
 def build_options(tools: BuilderTools, config: Config, session: BuildSession, log: BuildLog, cwd: str):
-    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher, PermissionResultAllow, PermissionResultDeny
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def can_use_tool(name, _input, _ctx):
         if name in ALLOWED:
@@ -135,11 +137,16 @@ def _default_client_factory():
     return make
 
 
-async def drive(prompt: str, session: BuildSession, options, client_factory, log: BuildLog) -> dict:
+def new_usage() -> dict[str, Any]:
+    return {k: 0 for k in _USAGE_KEYS} | {"total_cost_usd": None, "num_turns": 0, "nudges": 0}
+
+
+async def drive(prompt: str, session: BuildSession, options, client_factory, log: BuildLog, usage: dict[str, Any]) -> None:
+    """The message loop. `usage` is updated in place as result messages arrive, so whatever was
+    spent before a rate limit or a crash is still recorded by the caller."""
     from claude_agent_sdk import AssistantMessage, RateLimitEvent, ResultMessage, SystemMessage, TextBlock
 
-    usage: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "total_cost_usd": None, "num_turns": 0}
-    nudges = 0
+    interrupted = False
     async with client_factory(options) as client:
         await client.query(prompt)
         while True:
@@ -161,23 +168,32 @@ async def drive(prompt: str, session: BuildSession, options, client_factory, log
                             log.append({"event": "assistant_text", "text": block.text.strip()[:1500]})
                 elif isinstance(msg, ResultMessage):
                     u = msg.usage or {}
-                    usage["input_tokens"] += int(u.get("input_tokens") or 0)
-                    usage["output_tokens"] += int(u.get("output_tokens") or 0)
+                    for key in _USAGE_KEYS:
+                        usage[key] += int(u.get(key) or 0)
                     usage["total_cost_usd"] = msg.total_cost_usd
                     usage["num_turns"] += int(msg.num_turns or 0)
                     log.append({
-                        "event": "usage", "input_tokens": u.get("input_tokens"), "output_tokens": u.get("output_tokens"),
+                        "event": "usage", **{k: u.get(k) for k in _USAGE_KEYS},
                         "total_cost_usd": msg.total_cost_usd, "num_turns": msg.num_turns, "duration_ms": msg.duration_ms,
                         "subtype": msg.subtype,
                     })
-                    if msg.is_error and not session.finished:
+                    if msg.is_error and msg.subtype == "error_max_turns":
+                        if not session.finished:
+                            session.finish(MAX_TURNS_CAP)
+                    elif msg.is_error and not session.finished:
                         raise AgentSessionError(f"agent session ended with an error: {msg.subtype}")
-            if session.finished or nudges >= MAX_NUDGES:
+                if session.finished and not interrupted:
+                    # The manager has decided; cut the model's turn short rather than let it keep trying refused tools.
+                    interrupted = True
+                    try:
+                        await client.interrupt()
+                    except Exception:
+                        pass
+            session.check_wall_clock()
+            if session.finished or usage["nudges"] >= MAX_NUDGES:
                 break
-            nudges += 1
+            usage["nudges"] += 1
             await client.query(NUDGE)
-    usage["nudges"] = nudges
-    return usage
 
 
 def _module_name(interface_md: str) -> str:
@@ -207,15 +223,26 @@ class AgentBuilder:
             f"{caps.test_runs} test runs, {caps.wall_clock_s / 3600:.1f} hours, "
             f"{session.record.budget.limit_usd:.2f} USD of GPU"
         )
+        prior_runs = session.record.counters.test_runs_used
+        existing = workspace.list_files()
+        prior = ""
+        if prior_runs or existing:
+            prior = (
+                f"This is a resumed session: {prior_runs} of {caps.test_runs} runs used so far. "
+                f"The workspace already contains: {', '.join(existing[:50]) or '(nothing)'}. "
+                "Read what is there before rewriting it."
+            )
         prompt = render_task(
             ctx.spec_path.read_text(encoding="utf-8"), interface_md, public_tests, module,
-            self.config.allowed_packages, caps_text,
+            self.config.allowed_packages, caps_text, prior=prior,
         )
+        usage = new_usage()
         scratch = tempfile.mkdtemp(prefix="p2c-agent-")
         try:
             options = build_options(tools, self.config, session, log, cwd=scratch)
-            usage = asyncio.run(drive(prompt, session, options, self.client_factory, log))
+            asyncio.run(drive(prompt, session, options, self.client_factory, log, usage))
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
-        session.record.budget.spent_tokens += usage["input_tokens"] + usage["output_tokens"]
-        session.record.save()
+            # Whatever happened (pass, cap, rate limit, crash), the tokens seen so far are recorded.
+            session.record.budget.spent_tokens += sum(usage[k] for k in _USAGE_KEYS)
+            session.record.save()

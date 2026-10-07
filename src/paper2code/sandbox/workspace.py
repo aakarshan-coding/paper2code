@@ -4,13 +4,12 @@ mode only; the real confinement is the sandbox)."""
 from __future__ import annotations
 
 import shutil
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from paper2code.sandbox.runner import scrubbed_environment
+from paper2code.sandbox.runner import run_killable, scrubbed_environment
 
 MAX_OUTPUT_CHARS = 20_000
 
@@ -82,17 +81,7 @@ class LocalWorkspace:
         bash = shutil.which("bash")
         args = [bash, "-c", command] if bash else command
         start = time.monotonic()
-        try:
-            proc = subprocess.run(
-                args, shell=bash is None, cwd=self.root, env=scrubbed_environment(),
-                stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout_s,
-            )
-        except subprocess.TimeoutExpired as exc:
-            out = exc.stdout or ""
-            err = exc.stderr or ""
-            if isinstance(out, bytes):
-                out = out.decode("utf-8", errors="replace")
-            if isinstance(err, bytes):
-                err = err.decode("utf-8", errors="replace")
-            return ExecResult(-1, _truncate(out), _truncate(err), True, time.monotonic() - start)
-        return ExecResult(proc.returncode, _truncate(proc.stdout), _truncate(proc.stderr), False, time.monotonic() - start)
+        returncode, out, err, timed_out = run_killable(
+            args, cwd=self.root, env=scrubbed_environment(), timeout_s=timeout_s, shell=bash is None,
+        )
+        return ExecResult(returncode, _truncate(out), _truncate(err), timed_out, time.monotonic() - start)

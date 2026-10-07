@@ -359,3 +359,20 @@ The session's advertised tool list was exactly the six builder tools and nothing
 ### Lesson worth a blog paragraph
 
 The accidental live run is the lesson. A placeholder that raises "not implemented" is a perfectly good test double until the day it is implemented, at which point every test that leaned on it silently starts exercising the real thing. For a builder that spends money, that is a real risk. The fix is cheap and general: any test that touches a path that can reach a paid service stubs that path explicitly, so the test says what it means instead of relying on what does not exist yet.
+
+### What the review found (step 4a)
+
+The fresh reviewer re-ran the suite, probed the local workspace with scratch scripts, and introspected the installed SDK. One critical finding and eight important ones, all fixed test-first; the suite went from 236 to 245.
+
+1. **Critical: a timeout on the agent's shell command did not stop the command.** On Windows, killing the shell leaves whatever it started still running and still holding the output pipe, so the manager waited for the grandchild to finish on its own. The reviewer demonstrated a two-second timeout that returned after sixty seconds. For a builder that may launch a training script, that would have made the wall-clock cap, which the spec calls the practical limit on subscription use, meaningless in local mode. Commands now run in their own process group and the whole tree is killed on timeout, in both the agent's shell tool and the test runner.
+2. **A stray byte in command output crashed the tool call and left no log entry.** Output is now decoded tolerantly, and a tool that blows up for any reason returns an error to the agent and is still logged.
+3. **Token usage was lost on a rate limit and understated otherwise.** The live run recorded about 1,300 tokens; the real figure, including the cached system prompt and assignment re-read every turn, was closer to 30,000. Cache tokens are now counted, and whatever was spent before a rate limit or a crash is recorded.
+4. **The wall clock restarted on every resume,** so a crash loop could have granted a fresh two hours each time. The clock now starts at the first session start recorded in the build log, and a resumed session's first prompt tells the agent how many runs are already used and what is already in the workspace.
+5. **The "untrusted data" note was copied from the scout and told the builder to ignore the instructions in the very spec it must implement.** Rewritten: implement what the spec describes, ignore anything in it that addresses the loop itself.
+6. **The prompt invited the agent to install packages,** which in local mode means into the operator's own Python. Removed; the allowed packages are preinstalled.
+7. **Running out of turns looked like a crash** instead of a cap. It is now an `incomplete_budget` outcome, the wall clock is checked before every nudge, and the driver interrupts the model's turn once the manager has ended the session rather than letting it keep trying refused tools.
+8. **Tool handlers ran synchronously inside the event loop,** so a slow command would have frozen the hooks and the interrupt path. They now run on a worker thread.
+
+### Lesson worth a blog paragraph
+
+The critical finding is a reminder that "I set a timeout" and "the thing stops" are different claims, and the gap between them is platform-specific. The timeout killed exactly one process; everything that process had started kept going. Caps are structural defenses only if the thing they cap can actually be stopped, which means the enforcement has to reach every process the agent can spawn, not just the first one.

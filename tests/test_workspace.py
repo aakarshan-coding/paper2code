@@ -53,3 +53,22 @@ def test_exec_output_is_truncated(tmp_path):
     ws = LocalWorkspace(tmp_path)
     r = ws.exec(f'"{sys.executable}" -c "print(\'x\' * 50000)"', timeout_s=30)
     assert len(r.stdout) <= 20_100 and "truncated" in r.stdout
+
+
+def test_exec_timeout_kills_child_processes(tmp_path):
+    """A command whose child outlives the shell must not hold the manager past the timeout."""
+    import time
+
+    ws = LocalWorkspace(tmp_path)
+    ws.write_file("spawn.py", "import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\ntime.sleep(60)\n")
+    start = time.monotonic()
+    r = ws.exec(f'"{sys.executable}" spawn.py', timeout_s=2)
+    assert r.timed_out is True
+    assert time.monotonic() - start < 20
+
+
+def test_exec_decodes_non_utf8_output(tmp_path):
+    ws = LocalWorkspace(tmp_path)
+    ws.write_file("junk.py", "import sys\nsys.stdout.buffer.write('arrow \u2192 ok '.encode('utf-8') + b'\\x81\\xff' + b' done')\n")
+    r = ws.exec(f'"{sys.executable}" junk.py', timeout_s=30)
+    assert r.returncode == 0 and "arrow" in r.stdout and "done" in r.stdout

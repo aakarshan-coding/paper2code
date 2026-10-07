@@ -21,6 +21,19 @@ from paper2code.manager.record import RunError, RunRecord
 from paper2code.sandbox.runner import TestRunner, TestRunResult
 
 
+def _elapsed_since_first_start(log: BuildLog) -> float:
+    from datetime import datetime, timezone
+
+    starts = log.events("session_start")
+    if not starts:
+        return 0.0
+    try:
+        first = datetime.fromisoformat(starts[0]["ts"])
+    except (KeyError, ValueError):
+        return 0.0
+    return max(0.0, (datetime.now(timezone.utc) - first).total_seconds())
+
+
 class BuildSession:
     """Manager-owned. Counts test runs, enforces caps, writes build.log, decides when the session is over."""
 
@@ -32,7 +45,9 @@ class BuildSession:
         self.log = log
         self.gpu_usd_per_hour = gpu_usd_per_hour
         self.now = now
-        self.started_at = now()
+        # Resume: the wall clock started at the FIRST session_start of this run, not at this process's start,
+        # so a crash loop cannot grant a fresh two hours every time.
+        self.started_at = now() - _elapsed_since_first_start(log)
         self.workspace = record.run_dir / "workspace"
         self.public_tests = record.run_dir / "scope" / "tests" / "public"
         self.finished = False

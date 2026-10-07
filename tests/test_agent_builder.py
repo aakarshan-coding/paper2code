@@ -12,7 +12,7 @@ from paper2code.agents.builder.tools import ALLOWED, BuilderTools
 from paper2code.config import Config
 from paper2code.manager.buildlog import BuildLog
 from paper2code.manager.outcomes import Outcome
-from paper2code.manager.record import RunRecord
+from paper2code.manager.record import Caps, RunRecord
 from paper2code.manager.stages import build as build_stage
 from paper2code.manager.stages.build import BuildSession
 from paper2code.sandbox.runner import LocalTestRunner
@@ -58,6 +58,9 @@ class FakeClient:
     async def receive_response(self):
         for msg in (self.script.pop(0) if self.script else [_result()]):
             yield msg
+
+    async def interrupt(self):
+        self.interrupts = getattr(self, "interrupts", 0) + 1
 
 
 def _factory(client):
@@ -113,13 +116,20 @@ def test_session_aborts_if_extra_tools_are_visible(tmp_path, canary_dir):
 
 
 def test_rate_limit_event_raises_rate_limited(tmp_path, canary_dir):
+    """A rate limit on the second turn: the first turn's tokens are still recorded and the event is logged."""
     rec, ctx = _wire(tmp_path, canary_dir)
     info = _mk(RateLimitInfo, status="rejected", rate_limit_type="five_hour")
-    client = FakeClient([[_init(ALLOWED), _mk(RateLimitEvent, rate_limit_info=info, uuid="u", session_id="s")]])
+    client = FakeClient([
+        [_init(ALLOWED), _result()],
+        [_mk(RateLimitEvent, rate_limit_info=info, uuid="u", session_id="s")],
+    ])
     builder = AgentBuilder(Config(), client_factory=_factory(client))
     build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
     final = RunRecord.load(rec.run_dir)
     assert final.outcome is Outcome.ERROR and final.error.reason == "rate_limited"
+    assert final.budget.spent_tokens == 120
+    events = [e["event"] for e in BuildLog(rec.run_dir / "build.log").read()]
+    assert "rate_limited" in events and events[-1] == "session_end"
 
 
 def test_scripted_agent_reaches_all_public_passed(tmp_path, canary_dir):
@@ -146,6 +156,7 @@ def test_scripted_agent_reaches_all_public_passed(tmp_path, canary_dir):
     events = [e["event"] for e in BuildLog(rec.run_dir / "build.log").read()]
     assert events[0] == "session_start" and "tool_call" in events and "usage" in events and events[-1] == "session_end"
     assert len(client.queries) == 1  # no nudge after the session ended
+    assert client.interrupts == 1  # the driver cut the turn short once the manager ended the session
 
 
 def test_tools_are_refused_after_session_ends(tmp_path, canary_dir):
@@ -186,3 +197,50 @@ def test_error_result_raises_session_error(tmp_path, canary_dir):
     builder = AgentBuilder(Config(), client_factory=_factory(client))
     with pytest.raises(AgentSessionError, match="error_during_execution"):
         build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+
+
+def test_cache_tokens_are_counted(tmp_path, canary_dir):
+    rec, ctx = _wire(tmp_path, canary_dir)
+    quiet = _result(usage={})  # the three nudges after the agent stops early add nothing
+    client = FakeClient([
+        [_init(ALLOWED), _result(usage={"input_tokens": 6, "output_tokens": 1300, "cache_creation_input_tokens": 9000, "cache_read_input_tokens": 20000})],
+        [quiet], [quiet], [quiet],
+    ])
+    builder = AgentBuilder(Config(), client_factory=_factory(client))
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+    assert RunRecord.load(rec.run_dir).budget.spent_tokens == 6 + 1300 + 9000 + 20000
+    row = [e for e in BuildLog(rec.run_dir / "build.log").read() if e["event"] == "usage"][0]
+    assert row["cache_creation_input_tokens"] == 9000 and row["cache_read_input_tokens"] == 20000
+
+
+def test_max_turns_result_is_a_cap_outcome(tmp_path, canary_dir):
+    rec, ctx = _wire(tmp_path, canary_dir)
+    client = FakeClient([[_init(ALLOWED), _result(subtype="error_max_turns", is_error=True)]])
+    builder = AgentBuilder(Config(), client_factory=_factory(client))
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+    final = RunRecord.load(rec.run_dir)
+    assert final.outcome is Outcome.INCOMPLETE_BUDGET and final.error is None
+    assert BuildLog(rec.run_dir / "build.log").read()[-1]["reason"] == "max_turns_cap"
+
+
+def test_wall_clock_is_checked_before_nudging(tmp_path, canary_dir):
+    rec, ctx = _wire(tmp_path, canary_dir)
+    rec.caps = Caps(test_runs=25, wall_clock_s=0, stall_n=5)
+    rec.save()
+    client = FakeClient([[_init(ALLOWED), _result()], [_result()], [_result()], [_result()]])
+    builder = AgentBuilder(Config(), client_factory=_factory(client))
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+    assert len(client.queries) == 1  # no nudges once the clock is up
+    assert RunRecord.load(rec.run_dir).outcome is Outcome.INCOMPLETE_BUDGET
+
+
+def test_resume_prompt_mentions_prior_work(tmp_path, canary_dir):
+    rec, ctx = _wire(tmp_path, canary_dir)
+    rec.counters.test_runs_used = 3
+    rec.save()
+    (rec.run_dir / "workspace").mkdir(exist_ok=True)
+    (rec.run_dir / "workspace" / "canary_method.py").write_text("# earlier work\n", encoding="utf-8")
+    client = FakeClient([[_init(ALLOWED), _result()]])
+    builder = AgentBuilder(Config(), client_factory=_factory(client))
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+    assert "resumed session" in client.queries[0] and "3 of 25" in client.queries[0] and "canary_method.py" in client.queries[0]

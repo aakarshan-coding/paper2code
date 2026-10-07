@@ -283,3 +283,20 @@ def test_make_builder_agent(tmp_path):
     from paper2code.manager.graph import RunContext
 
     assert isinstance(make_builder(RunContext(config=Config(), builder="agent")), AgentBuilder)
+
+
+def test_wall_clock_resumes_from_first_session_start(tmp_path, canary_dir):
+    from datetime import datetime, timedelta, timezone
+
+    rec = _seed_run(tmp_path, canary_dir)
+    rec.caps = Caps(test_runs=25, wall_clock_s=7200, stall_n=5)
+    rec.save()
+    (rec.run_dir / "workspace").mkdir(exist_ok=True)
+    log = BuildLog(rec.run_dir / "build.log")
+    three_hours_ago = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(timespec="seconds")
+    log.append({"ts": three_hours_ago, "event": "session_start", "builder": "agent", "test_runs_used": 0})
+    s = BuildSession(rec, _ScriptedRunner([_fail("a::t")]), log, now=lambda: 1000.0)
+    assert s.elapsed_s >= 3 * 3600 - 5
+    with pytest.raises(_BF):
+        s.run_tests()
+    assert s.finish_reason == WALL_CLOCK_CAP

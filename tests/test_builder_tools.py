@@ -24,8 +24,10 @@ def test_tool_specs_and_allowlist():
 
 
 def test_prompts_mention_the_rules():
-    for needle in ("run_tests", "give_up", "hidden", "hardcod", "NotImplementedError", "untrusted"):
+    for needle in ("run_tests", "give_up", "hidden", "hardcod", "NotImplementedError", "untrusted", "Implement what the spec describes"):
         assert needle in SYSTEM_PROMPT, needle
+    assert "material to grade" not in SYSTEM_PROMPT and "pip install is permitted" not in SYSTEM_PROMPT
+    assert "preinstalled" in SYSTEM_PROMPT
     text = render_task("SPEC", "IFACE", {"test_claim.py": "CLAIMTEST"}, "canary_method", ["numpy"], "25 test runs, 2.0 hours")
     for needle in ("SPEC", "IFACE", "CLAIMTEST", "canary_method.py", "numpy", "25 test runs", "BEGIN", "END"):
         assert needle in text, needle
@@ -86,3 +88,21 @@ def test_unknown_tool_is_an_error(tmp_path, canary_dir):
     rec, tools, log = _tools(tmp_path, canary_dir, [])
     text, err = tools.call("delete_everything", {})
     assert err and "unknown tool" in text
+
+
+def test_render_task_carries_a_resume_note():
+    text = render_task("S", "I", {}, "m", ["numpy"], "25 test runs", prior="This is a resumed session: 3 of 25 runs used.")
+    assert "resumed session" in text and "3 of 25" in text
+    assert "resumed" not in render_task("S", "I", {}, "m", ["numpy"], "25 test runs")
+
+
+def test_tool_exceptions_are_logged_as_errors(tmp_path, canary_dir, monkeypatch):
+    rec, tools, log = _tools(tmp_path, canary_dir, [])
+
+    def boom(path):
+        raise ValueError("decoder exploded")
+
+    monkeypatch.setattr(tools.workspace, "read_file", boom)
+    text, err = tools.call("read_file", {"path": "x.py"})
+    assert err and "tool error" in text and "decoder exploded" in text
+    assert log.events("tool_call")[-1]["ok"] is False

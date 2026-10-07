@@ -101,6 +101,55 @@ def parse_junit_errors(path: Path) -> tuple[str, ...]:
     )
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """Kill the process and everything it spawned. On Windows a plain kill leaves grandchildren
+    holding the stdout pipe, and communicate() then waits for them."""
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            stdin=subprocess.DEVNULL, capture_output=True,  # no inherited stdin: it may be closed under pytest
+        )
+    else:
+        import signal
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _decode(data: bytes | None) -> str:
+    return (data or b"").decode("utf-8", errors="replace")
+
+
+def run_killable(args, *, cwd, env: dict, timeout_s: float, shell: bool = False) -> tuple[int, str, str, bool]:
+    """Run a command in its own process group with a hard deadline that kills the whole tree.
+
+    Returns (returncode, stdout, stderr, timed_out). Output is decoded as UTF-8 with replacement so
+    a stray byte in a training log never raises.
+    """
+    kwargs: dict = dict(cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=shell)
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(args, **kwargs)
+    try:
+        out, err = proc.communicate(timeout=timeout_s)
+        return proc.returncode, _decode(out), _decode(err), False
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=15)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            out, err = b"", b""
+        return -1, _decode(out), _decode(err), True
+
+
 def parse_junit_details(path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
     """(skipped ids, {id: message}) where message is the failure/error text pytest recorded."""
     root = ET.parse(path).getroot()
@@ -123,7 +172,7 @@ class LocalTestRunner:
         self.timeout_s = timeout_s
 
     def run(self, workspace: Path, tests_dir: Path) -> TestRunResult:
-        with tempfile.TemporaryDirectory(prefix="p2c-run-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="p2c-run-", ignore_cleanup_errors=True) as tmp:
             snapshot = Path(tmp) / "snapshot"
             tests_copy = Path(tmp) / "tests"
             shutil.copytree(workspace, snapshot, ignore=_IGNORE)
@@ -140,21 +189,13 @@ class LocalTestRunner:
                 f"--junitxml={report}", "--rootdir", str(tests_copy),
             ]
             start = time.monotonic()
-            try:
-                proc = subprocess.run(
-                    cmd, cwd=tmp, env=env, stdin=subprocess.DEVNULL,
-                    capture_output=True, text=True, timeout=self.timeout_s,
-                )
-            except subprocess.TimeoutExpired as exc:
-                output = (exc.stdout or "") + (exc.stderr or "")
-                if isinstance(output, bytes):
-                    output = output.decode("utf-8", errors="replace")
-                return TestRunResult((), (), -1, True, time.monotonic() - start, 0.0, output, digest)
+            returncode, stdout, stderr, timed_out = run_killable(cmd, cwd=tmp, env=env, timeout_s=self.timeout_s)
             duration = time.monotonic() - start
+            if timed_out:
+                return TestRunResult((), (), -1, True, duration, 0.0, stdout + stderr, digest)
             passed, failed = parse_junit(report) if report.exists() else ((), ())
             errored = parse_junit_errors(report) if report.exists() else ()
             skipped, messages = parse_junit_details(report) if report.exists() else ((), {})
             return TestRunResult(
-                passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr, digest, errored,
-                skipped, messages,
+                passed, failed, returncode, False, duration, 0.0, stdout + stderr, digest, errored, skipped, messages,
             )

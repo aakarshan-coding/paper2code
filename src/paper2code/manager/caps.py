@@ -7,6 +7,7 @@ from paper2code.manager.record import RunRecord
 TEST_RUNS_CAP = "test_runs_cap"
 WALL_CLOCK_CAP = "wall_clock_cap"
 GPU_BUDGET_CAP = "gpu_budget_cap"
+MAX_TURNS_CAP = "max_turns_cap"  # the Agent SDK's turn limit; a backstop behind the wall clock
 STALL = "stall"
 ALL_PUBLIC_PASSED = "all_public_passed"
 GIVE_UP = "give_up"
@@ -17,6 +18,7 @@ _OUTCOMES: dict[str, Outcome | None] = {
     TEST_RUNS_CAP: Outcome.INCOMPLETE_BUDGET,
     WALL_CLOCK_CAP: Outcome.INCOMPLETE_BUDGET,
     GPU_BUDGET_CAP: Outcome.INCOMPLETE_BUDGET,
+    MAX_TURNS_CAP: Outcome.INCOMPLETE_BUDGET,
     GIVE_UP: Outcome.INCOMPLETE_STUCK,
     STALL: Outcome.INCOMPLETE_STUCK,
     BUILDER_RETURNED: Outcome.INCOMPLETE_STUCK,

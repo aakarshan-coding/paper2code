@@ -2,6 +2,7 @@
 agent.py only marshals arguments and text."""
 from __future__ import annotations
 
+import threading
 import time
 from typing import Any
 
@@ -78,19 +79,23 @@ class BuilderTools:
         self.workspace = workspace
         self.log = log
         self.tool_timeout_s = tool_timeout_s
+        self._lock = threading.Lock()  # tool calls run on worker threads; the session is single-threaded
 
     def call(self, name: str, args: dict) -> tuple[str, bool]:
-        """(text for the agent, is_error). Every call is logged; nothing runs after the session ends."""
+        """(text for the agent, is_error). Every call is logged, even one that blew up; nothing runs after the session ends."""
         start = time.monotonic()
-        if self.session.finished:
-            text, err = f"The session is over: {self.session.finish_reason}. No further actions are possible.", True
-        else:
-            try:
-                text, err = self._dispatch(name, args)
-            except BuildFinished as exc:
-                text, err = f"The session is over: {exc}.", True
-            except WorkspaceError as exc:
-                text, err = str(exc), True
+        with self._lock:
+            if self.session.finished:
+                text, err = f"The session is over: {self.session.finish_reason}. No further actions are possible.", True
+            else:
+                try:
+                    text, err = self._dispatch(name, args)
+                except BuildFinished as exc:
+                    text, err = f"The session is over: {exc}.", True
+                except WorkspaceError as exc:
+                    text, err = str(exc), True
+                except Exception as exc:  # never let a tool crash escape unlogged
+                    text, err = f"tool error: {type(exc).__name__}: {exc}", True
         self.log.append({
             "event": "tool_call", "tool": name, "args": _summarise(args), "ok": not err,
             "duration_s": round(time.monotonic() - start, 3),

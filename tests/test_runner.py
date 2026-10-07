@@ -201,3 +201,16 @@ def test_secrets_are_stripped_from_the_test_environment(tmp_path, monkeypatch):
     """)
     result = LocalTestRunner(timeout_s=60).run(ws, tests)
     assert result.all_passed, result.output
+
+
+def test_runner_timeout_kills_grandchildren(tmp_path):
+    import time
+
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    ws.mkdir()
+    _write(tests / "test_spawn.py", "import subprocess, sys, time\ndef test_x():\n    subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n    time.sleep(60)\n")
+    start = time.monotonic()
+    result = LocalTestRunner(timeout_s=2).run(ws, tests)
+    assert result.timed_out is True
+    assert time.monotonic() - start < 20

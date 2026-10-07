@@ -123,7 +123,7 @@ def run_stub_check(scope_dir: Path, interface: InterfaceSpec, runner: TestRunner
     public = scope_dir / "tests" / "public"
     hidden = scope_dir / "tests" / "hidden"
     out = StubCheckResult()
-    with tempfile.TemporaryDirectory(prefix="p2c-stubs-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="p2c-stubs-", ignore_cleanup_errors=True) as tmp:
         workspace = Path(tmp) / "workspace"
         workspace.mkdir()
         (workspace / f"{interface.module}.py").write_text(render_stubs(interface), encoding="utf-8")

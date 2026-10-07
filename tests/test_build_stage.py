@@ -152,3 +152,103 @@ def test_builder_exception_is_logged_and_recorded(tmp_path, canary_dir):
     assert final.error is not None
     assert (final.error.stage, final.error.reason) == ("build", "exception")
     assert "kaboom" in final.error.message
+
+
+# ---- step 4a: caps in the build session ----
+from paper2code.agents.builder.base import BuildFinished as _BF  # noqa: E402
+from paper2code.manager.caps import STALL, TEST_RUNS_CAP, WALL_CLOCK_CAP  # noqa: E402
+from paper2code.manager.stages.build import BuildSession  # noqa: E402
+from paper2code.sandbox.runner import TestRunResult  # noqa: E402
+
+
+class _ScriptedRunner:
+    """Returns the next scripted result on every run."""
+
+    def __init__(self, results):
+        self.results = list(results)
+        self.calls = 0
+
+    def run(self, workspace, tests_dir):
+        self.calls += 1
+        return self.results.pop(0)
+
+
+def _fail(*ids):
+    return TestRunResult((), tuple(ids), 1, False, 0.5, 2.0, "", "digest")
+
+
+def _session(tmp_path, canary_dir, runner, now, **caps):
+    rec = _seed_run(tmp_path, canary_dir)
+    rec.caps = Caps(**{"test_runs": 25, "wall_clock_s": 7200, "stall_n": 5, **caps})
+    rec.save()
+    (rec.run_dir / "workspace").mkdir(exist_ok=True)
+    return rec, BuildSession(rec, runner, BuildLog(rec.run_dir / "build.log"), gpu_usd_per_hour=1.0, now=now)
+
+
+def test_session_test_runs_cap_finishes_with_budget_reason(tmp_path, canary_dir):
+    rec, s = _session(tmp_path, canary_dir, _ScriptedRunner([_fail("a::t")] * 3), now=lambda: 0.0, test_runs=2)
+    s.run_tests()
+    s.run_tests()
+    with pytest.raises(_BF):
+        s.run_tests()
+    assert s.finished and s.finish_reason == TEST_RUNS_CAP
+    assert rec.counters.test_runs_used == 2
+
+
+def test_session_stall_detection(tmp_path, canary_dir):
+    rec, s = _session(tmp_path, canary_dir, _ScriptedRunner([_fail("a::t", "a::u")] * 3), now=lambda: 0.0, stall_n=3)
+    s.run_tests()
+    s.run_tests()
+    s.run_tests()
+    assert s.finished and s.finish_reason == STALL
+    assert [e["event"] for e in BuildLog(rec.run_dir / "build.log").read()][-1] == "run_tests"
+
+
+def test_session_wall_clock_cap(tmp_path, canary_dir):
+    clock = {"t": 0.0}
+    rec, s = _session(tmp_path, canary_dir, _ScriptedRunner([_fail("a::t")] * 2), now=lambda: clock["t"], wall_clock_s=100)
+    s.run_tests()
+    clock["t"] = 101.0
+    assert s.check_wall_clock() is True
+    assert s.finish_reason == WALL_CLOCK_CAP
+    with pytest.raises(_BF):
+        s.run_tests()
+
+
+def test_session_gpu_budget_cap_uses_gpu_seconds(tmp_path, canary_dir):
+    rec, s = _session(tmp_path, canary_dir, _ScriptedRunner([TestRunResult((), ("a::t",), 1, False, 0.5, 7200.0, "", "d")] * 2), now=lambda: 0.0)
+    rec.budget.limit_usd = 1.0
+    s.run_tests()  # 7200 GPU seconds at 1 USD/h = 2 USD, over the 1 USD limit
+    with pytest.raises(_BF):
+        s.run_tests()
+    assert s.finish_reason == "gpu_budget_cap"
+
+
+def test_session_resumes_counters_from_record_and_log(tmp_path, canary_dir):
+    rec, s = _session(tmp_path, canary_dir, _ScriptedRunner([_fail("a::t")] * 2), now=lambda: 0.0, stall_n=3)
+    s.run_tests()
+    s.run_tests()
+    rec2 = RunRecord.load(rec.run_dir)
+    assert rec2.counters.test_runs_used == 2
+    s2 = BuildSession(rec2, _ScriptedRunner([_fail("a::t")]), BuildLog(rec.run_dir / "build.log"), now=lambda: 0.0)
+    assert len(s2.failing_history) == 2  # seeded from build.log
+    s2.run_tests()
+    assert s2.finished and s2.finish_reason == STALL  # 3 identical in a row across the crash
+    assert rec2.counters.test_runs_used == 3
+
+
+def test_run_with_builder_maps_cap_reasons_to_outcomes(tmp_path, canary_dir):
+    rec = _seed_run(tmp_path, canary_dir)
+    rec.caps = Caps(test_runs=1, wall_clock_s=7200, stall_n=5)
+    rec.save()
+
+    class TwoRuns:
+        def build(self, ctx):
+            ctx.run_tests()
+            ctx.run_tests()  # second call hits the cap and raises BuildFinished
+
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), _ctx(tmp_path, None), TwoRuns())
+    final = RunRecord.load(rec.run_dir)
+    assert final.outcome is Outcome.INCOMPLETE_BUDGET
+    rows = BuildLog(rec.run_dir / "build.log").read()
+    assert rows[-1]["event"] == "session_end" and rows[-1]["reason"] == TEST_RUNS_CAP and "elapsed_s" in rows[-1]

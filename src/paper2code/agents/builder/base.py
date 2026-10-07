@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from paper2code.sandbox.runner import TestRunResult
 
@@ -20,6 +20,7 @@ class BuildContext:
     public_tests: Path
     run_tests: Callable[[], TestRunResult]
     give_up: Callable[[str], None]
+    session: Any = None  # the manager's BuildSession; the agent driver's hooks consult it, the stub ignores it
 
 
 class Builder(Protocol):

@@ -30,3 +30,5 @@ prices:                       # USD per 1M tokens, checked 2026-10-06
   gpt-5.5: {input: 5.00, output: 30.00}
 
 allowed_packages: [numpy, torch, scipy, scikit-learn]   # what scoped tests and builder code may import; the stub check runs locally
+builder_max_turns: 200        # Agent SDK turn cap; the wall-clock cap is the real limit
+builder_tool_timeout_s: 300   # one bash call inside the workspace

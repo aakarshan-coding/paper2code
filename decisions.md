@@ -241,3 +241,26 @@ The critical finding was a contract violation between two steps that were each c
 - Native execution assumed from the step 1 choice and "move on to step 2"; not re-asked.
 - Feature branch in place rather than a worktree, as in step 1.
 - The reviewer's declined-to-judge list was accepted in full: RSS-versus-API-query, weekend feed semantics, LLM spend sharing the single `spent_usd` field, model ids and prices as planning-day facts, the forced no-GPU flag, the policy interface, and the separate `runs/` repository all belong to later steps.
+
+---
+
+## 2026-10-07 — Step 3 plan: scoper, stub check, feasibility, freeze
+
+### What step 3 is
+
+The scope stage: take the top shortlisted paper and turn it into a frozen assignment with a plain-language spec, exact function signatures, public tests, and hidden tests. Check the assignment before accepting it, and fall through to the next paper when it fails.
+
+### Design decisions
+
+- **The scoper returns data, not files.** One structured call returns the spec text, the interface as a list of exact Python signatures, and every test file as a name plus contents. The manager writes the files. That is how "the scoper can only write under scope/" is enforced structurally: the model never gets a file tool at all, and the manager refuses any file name that is not a flat `test_*.py`.
+- **The interface is structured so stubs can be generated.** The manager renders both `interface.md` and a stub module where every function raises NotImplementedError from the same data. Parsing signatures back out of free-form Markdown would be brittle.
+- **"Every test must fail on stubs" is not enough.** A test file that cannot even be imported (wrong name, missing package, syntax error) also fails on stubs, and would make the assignment impossible to pass. Discovered while planning: pytest reports such a file as an error entry and aborts the session. So the stub check requires zero collection errors, and a scope with any is rejected as `tests_do_not_collect`, a reason the spec did not list.
+- **Trivial tests are cut out surgically** with the Python AST, decorators included, so the rest of the file survives. If the claim test itself is trivial, the scope is rejected.
+- **Seeds are counted from the collected test ids** of the claim test's parametrization, which is why the scoper is told exactly how to write that test.
+- **Resumable like step 2 learned to be.** Every attempt is logged as it finishes, a half-written scope directory is wiped before the next attempt, and papers already attempted are not drafted again.
+- **The fake scoper returns the EMA canary** with the same interface as the step 1 reference implementation, so the entire pipeline from fetch to `completed` now runs offline with no model and no GPU. That becomes a standing end-to-end test.
+- **A `scope --arxiv-id` command** skips the cheap scout pass and forces one paper through scoring, selection, and scoping, for trying the scoper on a chosen paper.
+
+### Cost
+
+About 0.30 USD per attempt on the strong model (a full paper in, a whole assignment out), at most three attempts a day.

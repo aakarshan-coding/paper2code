@@ -16,7 +16,7 @@
 - Full text: `https://arxiv.org/html/<id>v1` exists for current papers and contains an `<article>` element; `https://arxiv.org/pdf/<id>v1` is the fallback.
 - OpenAI SDK 3.1.0: `client.responses.parse(model=, instructions=, input=, text_format=PydanticModel)` returns `.output_parsed` and `.usage.input_tokens / .output_tokens`. `OpenAI(max_retries=N)` retries 429/5xx itself.
 - Prices (USD per million tokens, 2026-10): gpt-5.4-nano 0.20 in / 1.25 out; gpt-5.4-mini 0.75 / 4.50; gpt-5.5 5.00 / 30.00. Role assignment: scout pass one on gpt-5.4-nano, everything else on gpt-5.5. Rough cost per run at ~500 abstracts and 10 full texts: about 0.05 USD for pass one, about 1.00 USD for pass two.
-- **The OpenAI account has no credits as of 2026-10-06** (`credit_balance_exhausted`). Everything in this plan is testable offline with the fake model and mocked HTTP. The final live-scoring check (Task 8, step 7) is blocked until credits are added.
+- The OpenAI account had no credits when planning started on 2026-10-06 (`credit_balance_exhausted`); a new key with credits was verified the same day before execution, so the live-scoring check in Task 8 step 7 ran for real. Everything else in this plan is testable offline with the fake model and mocked HTTP.
 
 ## Global Constraints
 
@@ -2588,7 +2588,7 @@ Expected: 10 CLI tests pass; the live file reports 2 skipped; everything else gr
 Run: `PAPER2CODE_LIVE=1 pytest tests/test_live_arxiv.py -q`
 Expected: 2 PASS. If arXiv answers 503 or 429, the polite client backs off (up to about 75 seconds total); a final `ArxivUnavailable` means arXiv is throttling this network and the test should be retried later, not the code changed.
 
-- [ ] **Step 7: Live dry run (needs OpenAI credits; BLOCKED as of 2026-10-06)**
+- [ ] **Step 7: Live dry run (needs OpenAI credits on the account)**
 
 Run from the repo root:
 

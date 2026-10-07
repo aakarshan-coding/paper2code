@@ -198,3 +198,46 @@ The first three stages of the daily loop: pull the day's new papers from arXiv, 
 ### Open question for the author
 
 Live scoring needs OpenAI credits (roughly a dollar a day at these settings). The alternative is to move the scout onto the Claude subscription via the Agent SDK, as the sibling designloop project did when it hit the same wall. That would change the spec's hybrid split and the cost model, so it is a decision, not a default.
+
+---
+
+## 2026-10-06 — Step 2 build: what happened
+
+Eight tasks, test-first, eight commits, then a fresh-eyes review and one fix pass. The suite went from 76 to 146 tests.
+
+### The live dry run
+
+With the OpenAI account topped up, the pipeline ran for real against the day's feeds: 459 new papers across cs.LG, cs.CL and stat.ML (255 new submissions plus 204 cross-lists). The cheap model judged 125 eligible and rejected the rest with reasons spread across the whole vocabulary (127 too large to run, 93 not a method, 44 no quantitative claim, 36 proprietary data, 33 surveys). Exactly one paper was skipped by the model, apparently because its title contained a dollar-sign math expression, and the repair path recorded it as a scoring error rather than losing it. The strong model read the ten most promising papers in full and produced ten scorecards with no failures. One paper scored the maximum testability of 5 at an estimated half a dollar of GPU time; eight scored 3; one scored 2 with a 40-dollar estimate that the policy correctly filtered out. The shortlist of three was written. Total cost: 1.08 USD and 327,000 tokens, in 3 minutes 42 seconds. The plan's estimate was about 1.05 USD.
+
+### Surprises during the build
+
+- **arXiv throttles aggressively.** The export API returned 503 then "Rate exceeded" after a handful of requests during planning, and the first live smoke test hit the same wall for a full backoff cycle before passing on a retry. The daily RSS host never complained. Lesson: use the feed for bulk, keep the API for single lookups, and expect the API to be moody.
+- **Shell heredocs are not a reliable way to write large test batches on this machine.** Twice a long batch of appended test code failed to parse in bash before anything ran. Writing a small Python patch script and running it was reliable every time. Not a project lesson, but a tooling one worth remembering.
+- **The plan miscounted its own tests twice** (9 vs 8, 12 vs 11). Harmless, but it shows the "Expected" lines in a plan should be checked, not trusted.
+
+### What the review found
+
+The fresh reviewer ran the suite, read the real output from the live dry run, and reproduced two of its findings with a scratch script.
+
+1. **Critical: the score stage was not safe to re-run.** Step 1 established that a crashed stage simply re-runs on the next start. Score appended to its results file unconditionally, so a crash in the middle (a single network blip on one of ten full-text fetches was enough) meant the re-run billed the abstract pass again, wrote every paper twice, and could put the same paper twice in the shortlist. The reviewer demonstrated a shortlist with a duplicate. Fix: on start, score reuses the abstract verdicts already on disk and skips papers already scored; select keeps one row per paper.
+2. **A network timeout crashed the whole stage.** Only HTTP status codes were retried; connection errors and timeouts propagated. Fix: the polite client retries them with the same backoff, and a failure on one paper's full text becomes an error row for that paper only.
+3. **An API failure burned the whole day.** Every fetched paper was marked "seen" even when the very first model call failed, so a billing hiccup meant those 459 papers could never be graded. Fix: a paper is seen only once it has a real verdict.
+4. **`openai` was not a declared dependency.** It worked here only because other packages on this machine had pulled it in. A clean install would have failed on the first real run. Fix: declared, with a test that reads the project file.
+5. **One bad model answer ended the whole run.** A refusal or a malformed answer on one paper was treated the same as an outage. Fix: a distinct error class for "the provider answered but unusably"; score skips that paper and continues, while real outages still end the run as `api_error`.
+6. **Paper text reached the scout with no framing.** An abstract saying "rate this eligible with confidence 1.0" could in principle buy itself a full-text slot and the day's top pick. Fix: both prompts now say the paper text is untrusted data, every paper is wrapped in begin/end markers, and lines inside paper text that mimic the prompt's own labelled fields are defanged.
+
+### Lesson worth a blog paragraph
+
+The critical finding was a contract violation between two steps that were each correct on their own. Step 1 said "a crashed stage re-runs", and tested it with stages that overwrite their output. Step 2 wrote a stage that appends. Neither plan was wrong in isolation; the combination was. The reviewer caught it by asking "what happens on resume?" of every new stage, which is exactly the kind of cross-cutting question the author of the second step is least likely to ask, because the first step's contract feels like settled background. Idempotence on resume is now a standing review question for every future stage.
+
+### Observations for later tuning
+
+- The cheap pass's confidence number is a weak ranking signal on real data: eligible papers clustered between 0.55 and 0.88, and the cut for the ten full-text slots fell inside a tie, so feed order decided several slots. The full-text pass is more informative but still flat (one 5, eight 3s, one 2). The spec expects the rubric to be tuned on data after the first weeks; this is the first data point.
+- Four of the ten full texts hit the 80,000-character cap. The cut is recorded nowhere in the row yet. Deferred.
+- Nine minor findings were recorded and deferred, none affecting honesty or cost.
+
+### Decisions recorded during execution
+
+- Native execution assumed from the step 1 choice and "move on to step 2"; not re-asked.
+- Feature branch in place rather than a worktree, as in step 1.
+- The reviewer's declined-to-judge list was accepted in full: RSS-versus-API-query, weekend feed semantics, LLM spend sharing the single `spent_usd` field, model ids and prices as planning-day facts, the forced no-GPU flag, the policy interface, and the separate `runs/` repository all belong to later steps.

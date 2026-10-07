@@ -24,7 +24,7 @@ from paper2code.manager.scope_files import write_scope
 from paper2code.manager.stages.fetch import PAPERS_FILE
 from paper2code.manager.stages.select import SELECTED_FILE
 from paper2code.manager.stubcheck import run_stub_check
-from paper2code.sandbox.factory import make_runner
+from paper2code.sandbox.runner import LocalTestRunner
 
 ATTEMPTS_FILE = "scope_attempts.jsonl"
 DRAFTS_DIR = "scope_drafts"  # validated drafts persisted before the stub check, so a crash there never re-bills
@@ -59,7 +59,8 @@ def run(record: RunRecord, ctx: RunContext) -> None:
     attempted = {r["arxiv_id"] for r in read_attempts(run_dir)}
     llm = make_chat_model(ctx)
     http = arxiv_http.make_polite_client(ctx)
-    runner = make_runner(ctx)
+    # The stub check runs locally whatever the mode: it only needs tests to fail on stubs, never a GPU.
+    runner = LocalTestRunner(timeout_s=cfg.run_tests_timeout_s)
     usage = Usage()
     accepted = False
     try:

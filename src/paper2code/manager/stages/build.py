@@ -116,33 +116,57 @@ class BuildSession:
 def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> None:
     from paper2code.agents.builder.agent import RateLimited
     from paper2code.sandbox.factory import make_runner
+    from paper2code.sandbox.modal_session import SandboxFailed, modal_build_session
 
     run_dir = record.run_dir
     scope = run_dir / "scope"
     workspace = run_dir / "workspace"
     workspace.mkdir(exist_ok=True)
     log = BuildLog(run_dir / "build.log")
-    session = BuildSession(record, make_runner(ctx), log, gpu_usd_per_hour=ctx.config.gpu_usd_per_hour)
-    build_ctx = BuildContext(
-        workspace=workspace,
-        spec_path=scope / "spec.md",
-        interface_path=scope / "interface.md",
-        public_tests=scope / "tests" / "public",
-        run_tests=session.run_tests,
-        give_up=session.give_up,
-        session=session,
-    )
-    log.append({"event": "session_start", "builder": ctx.builder, "test_runs_used": record.counters.test_runs_used})
+    # The agent works in a Modal sandbox unless --no-gpu; the stub builder copies a reference locally and
+    # needs no sandbox, so only its test runs go remote.
+    use_sandbox = not ctx.no_gpu and ctx.builder == "agent"
+
+    def _build(session: BuildSession, workspace_api) -> None:
+        builder.build(BuildContext(
+            workspace=workspace, spec_path=scope / "spec.md", interface_path=scope / "interface.md",
+            public_tests=scope / "tests" / "public", run_tests=session.run_tests, give_up=session.give_up,
+            session=session, workspace_api=workspace_api,
+        ))
+
+    def _end_as_error(reason: str, message: str) -> None:
+        # Infrastructure outcome, not the builder's failure: keep workspace and log as they stand, no retry today.
+        elapsed = round(session.elapsed_s, 1) if session else 0.0
+        log.append({"event": "session_end", "reason": reason, "elapsed_s": elapsed, "message": message[:500]})
+        record.outcome = Outcome.ERROR
+        record.error = RunError(stage="build", reason=reason, message=message)
+        record.save()
+
+    log.append({"event": "session_start", "builder": ctx.builder, "test_runs_used": record.counters.test_runs_used,
+                "sandbox": use_sandbox})
+    session: BuildSession | None = None
     try:
-        builder.build(build_ctx)
+        if use_sandbox:
+            with modal_build_session(record, ctx, log) as (workspace_api, runner):
+                session = BuildSession(record, runner, log, gpu_usd_per_hour=ctx.config.gpu_usd_per_hour)
+                try:
+                    _build(session, workspace_api)
+                except (BuildFinished, RateLimited):
+                    raise
+                except Exception as exc:
+                    # Anything else inside the sandbox session (a lost connection, a remote failure) is the
+                    # sandbox's fault as far as the record is concerned; the message says what it was.
+                    raise SandboxFailed(f"{type(exc).__name__}: {exc}") from exc
+        else:
+            session = BuildSession(record, make_runner(ctx), log, gpu_usd_per_hour=ctx.config.gpu_usd_per_hour)
+            _build(session, None)
     except BuildFinished:
         pass
     except RateLimited as exc:
-        # Infrastructure outcome, not the builder's failure: keep workspace and log as they stand, no retry today.
-        log.append({"event": "session_end", "reason": "rate_limited", "elapsed_s": round(session.elapsed_s, 1)})
-        record.outcome = Outcome.ERROR
-        record.error = RunError(stage="build", reason="rate_limited", message=str(exc))
-        record.save()
+        _end_as_error("rate_limited", str(exc))
+        return
+    except SandboxFailed as exc:
+        _end_as_error("sandbox_failed", str(exc))
         return
     except Exception as exc:
         log.append({"event": "error", "message": f"{type(exc).__name__}: {exc}"})

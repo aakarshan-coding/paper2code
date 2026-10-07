@@ -28,14 +28,6 @@ def test_init_run_seeds_scope_stage(tmp_path, canary_dir, capsys):
     assert "tests/public/test_claim.py" in manifest
 
 
-def test_run_requires_no_gpu_flag(tmp_path, canary_dir, capsys):
-    run_dir = _init(tmp_path, canary_dir, capsys)
-    with pytest.raises(SystemExit) as exc:
-        main(["run", "--run", str(run_dir), "--builder", "stub", "--reference", str(canary_dir / "reference")])
-    assert exc.value.code == 2
-    assert "build step 4" in capsys.readouterr().err
-
-
 def test_stub_builder_requires_reference(tmp_path, canary_dir, capsys):
     run_dir = _init(tmp_path, canary_dir, capsys)
     with pytest.raises(SystemExit) as exc:
@@ -142,13 +134,6 @@ def test_run_until_select_does_not_require_gpu_flags(tmp_path, monkeypatch, caps
     assert main(["run", "--run", str(tmp_path / "2026-10-06"), "--until", "fetch"]) == 0
 
 
-def test_run_to_build_still_requires_no_gpu(tmp_path, canary_dir, capsys):
-    run_dir = _init(tmp_path, canary_dir, capsys)
-    with pytest.raises(SystemExit) as exc:
-        main(["run", "--run", str(run_dir), "--until", "build", "--builder", "stub", "--reference", str(canary_dir / "reference")])
-    assert exc.value.code == 2
-
-
 def test_run_until_scope_with_fake_llm_freezes_canary(tmp_path, monkeypatch, capsys):
     _patch_http(monkeypatch)
     main(["new-run", "--runs-root", str(tmp_path), "--date", "2026-10-07"])
@@ -186,3 +171,19 @@ def test_agent_builder_needs_no_reference_flag(tmp_path, canary_dir, capsys, mon
     rc = main(["build", "--run", str(run_dir), "--no-gpu", "--builder", "agent", "--config", str(tmp_path / "absent.yaml")])
     assert rc == 0 and seen == {"builder": "agent", "built": True}
     assert "requires --reference" not in capsys.readouterr().err
+
+
+def test_without_no_gpu_the_context_selects_modal(tmp_path, canary_dir, capsys, monkeypatch):
+    """No --no-gpu: the build stage gets the Modal runner (never called here, the builder is a probe)."""
+    import paper2code.agents.builder.factory as factory
+
+    seen = {}
+
+    class Probe:
+        def build(self, ctx):
+            seen["runner"] = type(ctx.session.runner).__name__
+
+    monkeypatch.setattr(factory, "make_builder", lambda ctx: Probe())
+    run_dir = _init(tmp_path, canary_dir, capsys)
+    rc = main(["build", "--run", str(run_dir), "--builder", "stub", "--reference", str(canary_dir / "reference"), "--config", str(tmp_path / "absent.yaml")])
+    assert rc == 0 and seen["runner"] == "ModalTestRunner"

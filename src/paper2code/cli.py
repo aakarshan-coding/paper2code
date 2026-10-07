@@ -24,7 +24,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 
 def _add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--run", type=Path, help="run directory, e.g. runs/2026-10-06")
-    p.add_argument("--no-gpu", action="store_true", help="use a local subprocess instead of a Modal sandbox")
+    p.add_argument("--no-gpu", action="store_true", help="run tests and the agent's workspace locally instead of on Modal")
     p.add_argument("--builder", choices=["stub", "agent"], default="stub")
     p.add_argument("--reference", type=Path, help="reference implementation dir for --builder stub")
     p.add_argument("--llm", choices=LLM_CHOICES, default=None, help="override config llm (openai | fake)")
@@ -78,13 +78,11 @@ def _reaches_build(command: str, until: str | None) -> bool:
 def _context(parser: argparse.ArgumentParser, args: argparse.Namespace, until: str | None = None) -> RunContext:
     config = _load_config(args.config)
     reaches_build = _reaches_build(args.command, until)
-    if reaches_build and not args.no_gpu:
-        parser.error("the Modal GPU sandbox lands in build step 4; pass --no-gpu")
     if reaches_build and args.builder == "stub" and args.reference is None:
         parser.error("--builder stub requires --reference DIR")
     return RunContext(
         config=config,
-        no_gpu=True,
+        no_gpu=args.no_gpu,
         builder=args.builder,
         reference_dir=args.reference.resolve() if args.reference else None,
         llm=args.llm or config.llm,

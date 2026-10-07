@@ -21,6 +21,7 @@ class BuildContext:
     run_tests: Callable[[], TestRunResult]
     give_up: Callable[[str], None]
     session: Any = None  # the manager's BuildSession; the agent driver's hooks consult it, the stub ignores it
+    workspace_api: Any = None  # a Workspace to use instead of a LocalWorkspace over `workspace` (Modal mode)
 
 
 class Builder(Protocol):

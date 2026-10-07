@@ -211,7 +211,7 @@ class AgentBuilder:
     def build(self, ctx: BuildContext) -> None:
         session: BuildSession = ctx.session
         log = session.log
-        workspace = self.workspace_factory(ctx.workspace)
+        workspace = ctx.workspace_api or self.workspace_factory(ctx.workspace)
         tools = BuilderTools(session, workspace, log, self.config.builder_tool_timeout_s)
         if self.on_tools_ready:
             self.on_tools_ready(tools)

@@ -75,3 +75,10 @@ def test_allowed_packages_default_and_override(tmp_path):
     p = tmp_path / "c.yaml"
     p.write_text("allowed_packages: [numpy]\n", encoding="utf-8")
     assert load_config(p).allowed_packages == ["numpy"]
+
+
+def test_step4b_config_defaults():
+    cfg = Config()
+    assert cfg.modal_app_name == "paper2code"
+    assert cfg.sandbox_allowed_domains == ["pypi.org", "files.pythonhosted.org", "download.pytorch.org"]
+    assert (cfg.sandbox_cpu, cfg.sandbox_memory_mb, cfg.payload_max_mb) == (2.0, 4096, 50)

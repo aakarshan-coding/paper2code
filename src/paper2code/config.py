@@ -63,6 +63,11 @@ class Config:
     allowed_packages: list[str] = field(default_factory=lambda: ["numpy", "torch", "scipy", "scikit-learn"])
     builder_max_turns: int = 200
     builder_tool_timeout_s: int = 300
+    modal_app_name: str = "paper2code"
+    sandbox_allowed_domains: list[str] = field(default_factory=lambda: ["pypi.org", "files.pythonhosted.org", "download.pytorch.org"])
+    sandbox_cpu: float = 2.0
+    sandbox_memory_mb: int = 4096
+    payload_max_mb: int = 50
 
 
 def load_config(path: Path) -> Config:
@@ -93,4 +98,9 @@ def load_config(path: Path) -> Config:
         allowed_packages=list(raw.get("allowed_packages", defaults.allowed_packages)),
         builder_max_turns=int(raw.get("builder_max_turns", defaults.builder_max_turns)),
         builder_tool_timeout_s=int(raw.get("builder_tool_timeout_s", defaults.builder_tool_timeout_s)),
+        modal_app_name=str(raw.get("modal_app_name", defaults.modal_app_name)),
+        sandbox_allowed_domains=list(raw.get("sandbox_allowed_domains", defaults.sandbox_allowed_domains)),
+        sandbox_cpu=float(raw.get("sandbox_cpu", defaults.sandbox_cpu)),
+        sandbox_memory_mb=int(raw.get("sandbox_memory_mb", defaults.sandbox_memory_mb)),
+        payload_max_mb=int(raw.get("payload_max_mb", defaults.payload_max_mb)),
     )

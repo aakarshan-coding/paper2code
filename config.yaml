@@ -32,3 +32,9 @@ prices:                       # USD per 1M tokens, checked 2026-10-06
 allowed_packages: [numpy, torch, scipy, scikit-learn]   # what scoped tests and builder code may import; the stub check runs locally
 builder_max_turns: 200        # Agent SDK turn cap; the wall-clock cap is the real limit
 builder_tool_timeout_s: 300   # one bash call inside the workspace
+
+modal_app_name: paper2code     # deployed with `python -m modal deploy src/paper2code/sandbox/modal_app.py`
+sandbox_allowed_domains: [pypi.org, files.pythonhosted.org, download.pytorch.org]   # plus hosts named in spec.md
+sandbox_cpu: 2.0
+sandbox_memory_mb: 4096
+payload_max_mb: 50             # a run_tests snapshot bigger than this is refused

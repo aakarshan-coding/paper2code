@@ -2,7 +2,7 @@
 name = "paper2code"
 version = "0.1.0"
 description = "Daily unattended loop: pick an arXiv paper, scope it, build it against tests, inspect the result."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "langgraph>=0.2",
     "pyyaml>=6",

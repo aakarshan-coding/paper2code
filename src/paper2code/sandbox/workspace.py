@@ -18,6 +18,11 @@ class WorkspaceError(Exception):
     """A refused path or a missing file; reported to the agent as a tool error."""
 
 
+class InfrastructureError(Exception):
+    """The workspace or the test runner itself failed (sandbox gone, remote function broken). Not
+    the agent's doing: the tool layer ends the session instead of handing this back as a tool error."""
+
+
 @dataclass(frozen=True)
 class ExecResult:
     returncode: int

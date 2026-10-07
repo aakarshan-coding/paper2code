@@ -8,9 +8,10 @@ from typing import Callable
 
 from paper2code.sandbox.remote_tests import PayloadTooLarge, build_payload, result_from_dict, tar_directory
 from paper2code.sandbox.runner import TestRunResult
+from paper2code.sandbox.workspace import InfrastructureError
 
 
-class RemoteError(Exception):
+class RemoteError(InfrastructureError):
     """The remote test function failed for a reason other than a timeout."""
 
 
@@ -46,8 +47,8 @@ class ModalTestRunner:
         return self._remote
 
     def run(self, workspace: Path, tests_dir: Path) -> TestRunResult:
-        snapshot = self.snapshot_source() if self.snapshot_source else tar_directory(workspace, "snapshot")
         try:
+            snapshot = self.snapshot_source() if self.snapshot_source else tar_directory(workspace, "snapshot")
             payload = build_payload(snapshot, tests_dir, self.max_payload_bytes)
         except PayloadTooLarge as exc:
             return TestRunResult((), (), -2, False, 0.0, 0.0, f"run_tests refused: {exc}", "")

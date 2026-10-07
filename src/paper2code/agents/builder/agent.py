@@ -234,7 +234,7 @@ class AgentBuilder:
             f"{session.record.budget.limit_usd:.2f} USD of GPU"
         )
         prior_runs = session.record.counters.test_runs_used
-        existing = workspace.list_files()
+        existing = [f for f in workspace.list_files() if not f.startswith(".assignment/")]  # the assignment copy is not prior work
         prior = ""
         if prior_runs or existing:
             prior = (

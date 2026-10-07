@@ -56,6 +56,16 @@ def modal_build_session(record, ctx, log: BuildLog, sandbox_factory=None, worksp
         raise SandboxFailed(f"could not create the builder sandbox: {type(exc).__name__}: {exc}") from exc
     log.append({"event": "sandbox", "action": "created", "id": getattr(sandbox, "object_id", None)})
     workspace = workspace_cls(sandbox)
+    workspace.export_max_bytes = cfg.payload_max_mb * 2**20
+
+    def snapshot() -> bytes:
+        # Every tree that goes to the test function is also written into the run record first, so the
+        # tree the inspector sees is the tree that was tested even if the sandbox dies before the final export.
+        data = workspace.export_tarball()
+        _export_to(run_dir, data)
+        log.append({"event": "sandbox", "action": "checkpoint", "bytes": len(data)})
+        return data
+
     try:
         if _has_files(run_dir / "workspace"):
             workspace.import_tarball(tar_directory(run_dir / "workspace", "snapshot"))
@@ -64,7 +74,7 @@ def modal_build_session(record, ctx, log: BuildLog, sandbox_factory=None, worksp
         workspace.write_assignment(spec_md, (scope / "interface.md").read_text(encoding="utf-8"), public)
         runner = runner_cls(
             timeout_s=cfg.run_tests_timeout_s, max_payload_bytes=cfg.payload_max_mb * 2**20,
-            snapshot_source=workspace.export_tarball, app_name=cfg.modal_app_name,
+            snapshot_source=snapshot, app_name=cfg.modal_app_name,
         )
         yield workspace, runner
     finally:
@@ -75,5 +85,6 @@ def modal_build_session(record, ctx, log: BuildLog, sandbox_factory=None, worksp
             log.append({"event": "sandbox", "action": "export_failed", "message": f"{type(exc).__name__}: {exc}"})
         try:
             sandbox.terminate()
-        finally:
             log.append({"event": "sandbox", "action": "terminated"})
+        except Exception as exc:  # already gone, or unreachable: its own timeout will reap it
+            log.append({"event": "sandbox", "action": "terminate_failed", "message": f"{type(exc).__name__}: {exc}"})

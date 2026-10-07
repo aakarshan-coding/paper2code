@@ -14,7 +14,8 @@ import tarfile
 import time
 from typing import Any
 
-from paper2code.sandbox.workspace import ExecResult, WorkspaceError, _truncate
+from paper2code.sandbox.remote_tests import PayloadTooLarge
+from paper2code.sandbox.workspace import ExecResult, InfrastructureError, WorkspaceError, _truncate
 
 ROOT = "/work"
 ASSIGNMENT_DIR = ".assignment"  # read-only copies of spec, interface and public tests, under root
@@ -22,6 +23,13 @@ _URL_RE = re.compile(r"https?://([A-Za-z0-9.-]+)", re.IGNORECASE)
 _EXPORT_EXCLUDES = ("__pycache__", ".venv", "venv", ".git", ".pytest_cache", ASSIGNMENT_DIR)
 _EXPORT_PATH = "/tmp/p2c-ws.tgz"
 _SEED_PATH = "/tmp/p2c-seed.tgz"
+_EXPORT_TIMEOUT_S = 120
+_NOT_FOUND = (FileNotFoundError, IsADirectoryError, NotADirectoryError)
+
+
+def _is_not_found(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc}".lower()
+    return isinstance(exc, _NOT_FOUND) or "notfound" in text or "no such file" in text or "not found" in text
 
 
 def extract_domains(text: str) -> list[str]:
@@ -45,9 +53,10 @@ def _reprefix(data: bytes, prefix: str) -> bytes:
 
 
 class ModalWorkspace:
-    def __init__(self, sandbox: Any, root: str = ROOT) -> None:
+    def __init__(self, sandbox: Any, root: str = ROOT, export_max_bytes: int | None = None) -> None:
         self.sandbox = sandbox
         self.root = root.rstrip("/") or "/"
+        self.export_max_bytes = export_max_bytes  # an export bigger than this is refused inside the sandbox
 
     def _resolve(self, path: str) -> str:
         if posixpath.isabs(path) or path.startswith("\\"):
@@ -62,12 +71,17 @@ class ModalWorkspace:
         try:
             return self.sandbox.filesystem.read_text(full)
         except Exception as exc:
-            raise WorkspaceError(f"file not found: {path} ({type(exc).__name__})") from exc
+            if _is_not_found(exc):
+                raise WorkspaceError(f"file not found: {path}") from exc
+            raise InfrastructureError(f"sandbox read failed: {type(exc).__name__}: {exc}") from exc
 
     def write_file(self, path: str, content: str) -> None:
         full = self._resolve(path)
-        self.sandbox.filesystem.make_directory(posixpath.dirname(full), create_parents=True)
-        self.sandbox.filesystem.write_text(content, full)
+        try:
+            self.sandbox.filesystem.make_directory(posixpath.dirname(full), create_parents=True)
+            self.sandbox.filesystem.write_text(content, full)
+        except Exception as exc:
+            raise InfrastructureError(f"sandbox write failed: {type(exc).__name__}: {exc}") from exc
 
     def list_files(self, path: str = "") -> list[str]:
         base = self._resolve(path) if path else self.root
@@ -77,28 +91,46 @@ class ModalWorkspace:
 
     def exec(self, command: str, timeout_s: int) -> ExecResult:
         start = time.monotonic()
-        proc = self.sandbox.exec("bash", "-lc", command, timeout=timeout_s, workdir=self.root)
-        out = proc.stdout.read()
-        err = proc.stderr.read()
-        proc.wait()
-        rc = proc.returncode
+        try:
+            proc = self.sandbox.exec("bash", "-lc", command, timeout=timeout_s, workdir=self.root)
+            out = proc.stdout.read()
+            err = proc.stderr.read()
+            proc.wait()
+            rc = proc.returncode
+        except Exception as exc:
+            raise InfrastructureError(f"sandbox exec failed: {type(exc).__name__}: {exc}") from exc
         return ExecResult(rc, _truncate(out or ""), _truncate(err or ""), rc == -1, time.monotonic() - start)
 
     def export_tarball(self) -> bytes:
-        """The workspace as a `snapshot/`-prefixed gzip tarball, junk and the assignment copy excluded."""
+        """The workspace as a `snapshot/`-prefixed gzip tarball, junk and the assignment copy excluded.
+        The size is checked inside the sandbox before anything is downloaded."""
         excludes = " ".join(f"--exclude={e}" for e in _EXPORT_EXCLUDES)
-        r = self.exec(f"tar czf {_EXPORT_PATH} {excludes} .", timeout_s=120)  # cwd is the root
+        r = self.exec(f"tar czf {_EXPORT_PATH} {excludes} . && stat -c %s {_EXPORT_PATH}", timeout_s=_EXPORT_TIMEOUT_S)
+        if r.timed_out:
+            raise PayloadTooLarge(f"exporting the workspace took more than {_EXPORT_TIMEOUT_S} s; is a dataset or a venv in the workspace?")
         if r.returncode != 0:
-            raise WorkspaceError(f"export failed: {r.stderr[:500]}")
-        return _reprefix(self.sandbox.filesystem.read_bytes(_EXPORT_PATH), "snapshot")
+            raise InfrastructureError(f"export failed: {r.stderr[:500]}")
+        size = int(r.stdout.strip().splitlines()[-1])
+        if self.export_max_bytes is not None and size > self.export_max_bytes:
+            raise PayloadTooLarge(
+                f"test payload is {size} bytes, over the {self.export_max_bytes} byte limit; is a dataset or a venv in the workspace?"
+            )
+        try:
+            data = self.sandbox.filesystem.read_bytes(_EXPORT_PATH)
+        except Exception as exc:
+            raise InfrastructureError(f"export download failed: {type(exc).__name__}: {exc}") from exc
+        return _reprefix(data, "snapshot")
 
     def import_tarball(self, data: bytes, prefix: str = "snapshot") -> None:
         """Unpack the `prefix/` members of a tarball into the workspace root."""
-        self.sandbox.filesystem.write_bytes(data, _SEED_PATH)
+        try:
+            self.sandbox.filesystem.write_bytes(data, _SEED_PATH)
+        except Exception as exc:
+            raise InfrastructureError(f"seed upload failed: {type(exc).__name__}: {exc}") from exc
         cmd = f"tar xzf {_SEED_PATH} --strip-components=1 {shlex.quote(prefix)}"  # cwd is the root
-        r = self.exec(cmd, timeout_s=120)
+        r = self.exec(cmd, timeout_s=_EXPORT_TIMEOUT_S)
         if r.returncode != 0:
-            raise WorkspaceError(f"import failed: {r.stderr[:500]}")
+            raise InfrastructureError(f"import failed: {r.stderr[:500]}")
 
     def write_assignment(self, spec_md: str, interface_md: str, public_tests: dict[str, str]) -> None:
         self.write_file(f"{ASSIGNMENT_DIR}/spec.md", spec_md)

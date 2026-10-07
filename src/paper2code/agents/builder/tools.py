@@ -10,7 +10,7 @@ from paper2code.agents.builder.base import BuildFinished
 from paper2code.manager.buildlog import BuildLog
 from paper2code.manager.stages.build import BuildSession
 from paper2code.sandbox.runner import TestRunResult
-from paper2code.sandbox.workspace import Workspace, WorkspaceError
+from paper2code.sandbox.workspace import InfrastructureError, Workspace, WorkspaceError
 
 SERVER = "paper2code"
 
@@ -94,6 +94,11 @@ class BuilderTools:
                     text, err = f"The session is over: {exc}.", True
                 except WorkspaceError as exc:
                     text, err = str(exc), True
+                except InfrastructureError as exc:
+                    # The sandbox or the test runner broke, not the agent's command: end the session so
+                    # the run is recorded as an infrastructure error instead of looping until a cap.
+                    self.session.fail("sandbox_failed", f"{type(exc).__name__}: {exc}")
+                    text, err = f"Infrastructure failure, the session is over: {exc}", True
                 except Exception as exc:  # never let a tool crash escape unlogged
                     text, err = f"tool error: {type(exc).__name__}: {exc}", True
         self.log.append({

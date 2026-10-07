@@ -52,6 +52,8 @@ class BuildSession:
         self.public_tests = record.run_dir / "scope" / "tests" / "public"
         self.finished = False
         self.finish_reason: str | None = None
+        self.failed = False  # ended by an infrastructure failure; finish_reason is then an error reason
+        self.failure_message = ""
         self.last_result: TestRunResult | None = None
         # Resume: the stall window continues across a crash because build.log is append-only.
         self.failing_history: list[frozenset[str]] = [
@@ -111,6 +113,16 @@ class BuildSession:
     def finish(self, reason: str) -> None:
         self.finished = True
         self.finish_reason = reason
+
+    def fail(self, reason: str, message: str) -> None:
+        """End the session because the infrastructure broke (sandbox gone, remote function failing).
+        The run ends as `error` with this reason; nothing is blamed on the builder."""
+        if self.finished:
+            return
+        self.log.append({"event": "infrastructure_failure", "reason": reason, "message": message[:500]})
+        self.failed = True
+        self.failure_message = message
+        self.finish(reason)
 
 
 class _AgentFailed(Exception):
@@ -184,6 +196,9 @@ def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> No
     except Exception as exc:
         log.append({"event": "error", "message": f"{type(exc).__name__}: {exc}"})
         raise
+    if session.failed:
+        _end_as_error(session.finish_reason, session.failure_message)
+        return
     if not session.finished:
         session.finish(BUILDER_RETURNED)
     log.append({"event": "session_end", "reason": session.finish_reason, "elapsed_s": round(session.elapsed_s, 1)})

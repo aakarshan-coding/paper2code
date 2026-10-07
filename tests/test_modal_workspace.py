@@ -11,31 +11,45 @@ from types import SimpleNamespace
 import pytest
 
 from paper2code.sandbox.modal_workspace import ROOT, ModalWorkspace, extract_domains
-from paper2code.sandbox.workspace import WorkspaceError
+from paper2code.sandbox.remote_tests import PayloadTooLarge
+from paper2code.sandbox.workspace import InfrastructureError, WorkspaceError
 
 
 class FakeSandbox:
     """Just enough of modal.Sandbox: exec(*args, timeout, workdir) and filesystem.{read,write,make_directory}.
-    Remote absolute paths map under `base`, so /work is base/work and /tmp is base/tmp."""
+    Remote absolute paths map under `base`, so /work is base/work and /tmp is base/tmp. Set `dead`
+    to make every call fail the way a lost sandbox does."""
 
     def __init__(self, base: Path):
         self.base = base
         (base / "work").mkdir(parents=True, exist_ok=True)
         (base / "tmp").mkdir(exist_ok=True)
         self.filesystem = SimpleNamespace(
-            write_text=lambda data, path: self._p(path).write_text(data, encoding="utf-8"),
-            write_bytes=lambda data, path: self._p(path).write_bytes(data),
-            read_text=lambda path: self._p(path).read_text(encoding="utf-8"),
-            read_bytes=lambda path: self._p(path).read_bytes(),
-            make_directory=lambda path, create_parents=True: self._p(path).mkdir(parents=create_parents, exist_ok=True),
+            write_text=lambda data, path: self._alive() or self._p(path).write_text(data, encoding="utf-8"),
+            write_bytes=lambda data, path: self._alive() or self._p(path).write_bytes(data),
+            read_text=lambda path: self._alive() or self._p(path).read_text(encoding="utf-8"),
+            read_bytes=lambda path: self._alive() or self._read_bytes(path),
+            make_directory=lambda path, create_parents=True: self._alive() or self._p(path).mkdir(parents=create_parents, exist_ok=True),
         )
         self.terminated = False
+        self.dead = False
+        self.bytes_read = 0
         self.object_id = "sb-fake"
         # Full path: a bare "bash" lets Windows pick System32's WSL launcher, which cannot see these paths.
         self.bash = shutil.which("bash") or "bash"
         # The sandbox's /tmp is base/tmp; ask this bash how it spells that directory.
         self.tmp_posix = subprocess.run([self.bash, "-c", "pwd"], cwd=base / "tmp", capture_output=True, text=True,
                                         stdin=subprocess.DEVNULL).stdout.strip()
+
+    def _alive(self):
+        if self.dead:
+            raise ConnectionError("sandbox gone")
+        return None
+
+    def _read_bytes(self, path):
+        data = self._p(path).read_bytes()
+        self.bytes_read += len(data)
+        return data
 
     def _p(self, remote: str) -> Path:
         if remote.startswith("/"):
@@ -50,8 +64,9 @@ class FakeSandbox:
         return str(self.base / "work").replace(os.sep, "/")
 
     def exec(self, *args, timeout=None, workdir=None, **kw):
+        self._alive()
         cmd = list(args)
-        if cmd[:2] == ["bash", "-lc"]:
+        if cmd[:2] == ["bash", "-lc"] or cmd[:2] == ["bash", "-c"]:
             # The real sandbox runs in /work; locally the same command runs in base/work with /tmp mapped.
             cmd = [self.bash, "-c", cmd[2].replace("/tmp/", self.tmp_posix + "/")]
         cwd = self._p(workdir or ROOT)
@@ -63,6 +78,7 @@ class FakeSandbox:
         return SimpleNamespace(stdout=io.StringIO(out), stderr=io.StringIO(err), wait=lambda: None, returncode=rc)
 
     def terminate(self):
+        self._alive()  # terminating a sandbox that is already gone fails too
         self.terminated = True
 
 
@@ -139,3 +155,24 @@ def test_write_assignment_is_readable_but_not_exported(ws):
     assert ".assignment/spec.md" in w.list_files()
     with tarfile.open(fileobj=io.BytesIO(w.export_tarball()), mode="r:gz") as tf:
         assert not any(".assignment" in m.name for m in tf.getmembers())
+
+
+def test_export_refuses_an_oversize_workspace_before_downloading_it(ws):
+    import random
+
+    w, sb = ws
+    w.export_max_bytes = 10_000
+    w.write_file("data.bin", random.Random(0).randbytes(200_000).decode("latin-1"))
+    with pytest.raises(PayloadTooLarge, match="payload"):
+        w.export_tarball()
+    assert sb.bytes_read == 0  # refused inside the sandbox; nothing was pulled to the manager
+
+
+def test_dead_sandbox_is_an_infrastructure_error_not_a_workspace_error(ws):
+    w, sb = ws
+    w.write_file("a.py", "x\n")
+    sb.dead = True
+    for call in (lambda: w.exec("true", 10), lambda: w.read_file("a.py"), lambda: w.write_file("b.py", "y"),
+                 lambda: w.list_files(), lambda: w.export_tarball()):
+        with pytest.raises(InfrastructureError):
+            call()

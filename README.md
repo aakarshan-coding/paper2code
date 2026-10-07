@@ -7,9 +7,10 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 1 of 6: run record, pipeline skeleton, local CLI, canary. The
-fetch, score, select and scope stages are not implemented yet; runs are seeded
-from a pre-written scope directory with `init-run`.
+Build step 2 of 6: fetch, scout and select work against live arXiv in dry-run
+mode. The scope stage is not implemented yet; a full run still needs `init-run`
+with a hand-written scope directory. Scout calls go to OpenAI and need credits
+on the account; `--llm fake` exercises the plumbing without any model.
 
 ## Setup
 
@@ -22,16 +23,28 @@ pytest
 ## Local mode
 
 ```bash
+# Dry run: fetch today's papers, score them, pick a shortlist, stop.
+paper2code new-run
+paper2code run --run runs/<date> --until select            # real scout (OpenAI)
+paper2code run --run runs/<date> --until select --llm fake # no model, plumbing only
+
+# One stage at a time, or one paper at a time
+paper2code fetch  --run runs/<date>
+paper2code score  --run runs/<date>
+paper2code score  --arxiv-id 2610.03769                     # fresh run with just this paper
+paper2code select --run runs/<date>
+
+# From a hand-written scope to completion (step 1 path)
 paper2code init-run --scope tests/fixtures/canary/scope --paper-id canary-0001 --title "EMA denoising canary"
 paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
-paper2code build --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
-paper2code inspect --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
-paper2code report --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
 ```
 
-A run directory holds `run.json`, `scope/` (frozen, with `manifest.json`),
-`workspace/`, `build.log`, `verdict.json` and `summary.md`. Re-running `run`
-on an existing run directory resumes at the last completed stage.
+A run directory holds `run.json`, `papers.jsonl`, `candidates.jsonl`,
+`selected.json`, then `scope/` (frozen, with `manifest.json`), `workspace/`,
+`build.log`, `verdict.json` and `summary.md`. `runs/seen.jsonl` lists every
+paper ever graded. Re-running `run` on an existing run directory resumes at the
+last completed stage. Set `PAPER2CODE_LIVE=1` to include the live arXiv smoke
+test in `pytest`.
 
 ## Known limitations at this build step
 

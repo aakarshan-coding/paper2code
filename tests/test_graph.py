@@ -84,11 +84,11 @@ def test_run_stage_refuses_to_skip_ahead_silently(tmp_path):
     assert calls == []
 
 
-def test_default_scope_stage_is_not_implemented_yet(tmp_path):
+def test_default_build_requires_a_reference_for_the_stub_builder(tmp_path):
     rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
-    rec.stage = "select"
+    rec.stage = "scope"
     rec.save()
-    with pytest.raises(NotImplementedError, match="scope stage"):
+    with pytest.raises(ValueError, match="reference_dir"):
         run_pipeline(rec.run_dir, _ctx(tmp_path))
 
 

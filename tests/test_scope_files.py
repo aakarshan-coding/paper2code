@@ -105,3 +105,34 @@ def test_write_scope_refuses_invalid_draft(tmp_path):
     with pytest.raises(ValueError, match="hidden"):
         write_scope(tmp_path / "scope", _draft(hidden_tests=[]))
     assert not (tmp_path / "scope").exists()
+
+
+def test_signatures_with_trailing_colon_are_accepted_and_normalised(tmp_path):
+    iface = InterfaceSpec(
+        module="m",
+        functions=[FunctionSpec(signature="def set_seed(seed: int) -> None:", doc="Seed.")],
+        classes=[ClassSpec(name="TinyForecaster", doc="", methods=[MethodSpec(signature="def forward(self, x: int) -> int: ", doc="")])],
+    )
+    assert validate_draft(_draft(interface=iface)) == []
+    stubs = render_stubs(iface)
+    assert "def set_seed(seed: int) -> None:\n" in stubs and "::" not in stubs
+    md = render_interface_md(iface)
+    assert "def set_seed(seed: int) -> None:\n" in md and "::" not in md
+    ast.parse(stubs)
+
+
+def test_stubs_with_third_party_annotations_import_without_those_packages(tmp_path):
+    iface = InterfaceSpec(
+        module="m",
+        functions=[FunctionSpec(signature="def make_windows(series: np.ndarray, device: str | None = None) -> tuple[torch.Tensor, torch.Tensor]", doc="")],
+        classes=[],
+    )
+    assert validate_draft(_draft(interface=iface)) == []
+    (tmp_path / "m.py").write_text(render_stubs(iface), encoding="utf-8")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("m", tmp_path / "m.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # must not raise NameError on np/torch
+    with pytest.raises(NotImplementedError):
+        mod.make_windows(None)

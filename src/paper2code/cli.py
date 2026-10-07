@@ -14,7 +14,7 @@ from paper2code.manager.graph import RunContext, run_pipeline, run_stage
 from paper2code.manager.local import init_run, init_run_for_paper
 from paper2code.manager.record import STAGES, Caps, Paper, create_run, stage_index
 
-STAGE_COMMANDS = ("fetch", "score", "select", "build", "inspect", "report")
+STAGE_COMMANDS = ("fetch", "score", "select", "scope", "build", "inspect", "report")
 LLM_CHOICES = ("openai", "fake")
 
 
@@ -56,8 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in STAGE_COMMANDS:
         sp = sub.add_parser(name, help=f"run only the {name} stage")
         _add_run_args(sp)
-        if name == "score":
-            sp.add_argument("--arxiv-id", help="score this one paper in a fresh run instead of --run")
+        if name in ("score", "scope"):
+            sp.add_argument("--arxiv-id", help="work on this one paper in a fresh run instead of --run")
             sp.add_argument("--runs-root", type=Path)
             sp.add_argument("--date", type=date.fromisoformat, default=None)
     return parser
@@ -123,16 +123,26 @@ def main(argv: list[str] | None = None) -> int:
     until = getattr(args, "until", None)
     ctx = _context(parser, args, until)
 
-    if args.command == "score" and getattr(args, "arxiv_id", None):
+    if args.command in ("score", "scope") and getattr(args, "arxiv_id", None):
         runs_root = args.runs_root if args.runs_root is not None else ctx.config.runs_root
         try:
             paper = fetch_by_id(args.arxiv_id, arxiv_http.make_polite_client(ctx))
         except Exception as exc:
-            print(f"score failed: could not fetch {args.arxiv_id}: {exc}", file=sys.stderr)
+            print(f"{args.command} failed: could not fetch {args.arxiv_id}: {exc}", file=sys.stderr)
             return 1
         record = init_run_for_paper(runs_root, paper, args.date or date.today(), ctx.config)
         print(f"created {record.run_dir}")
         args.run = record.run_dir
+        if args.command == "scope":
+            # One chosen paper: skip the scout's abstract pass, score it in full, select it, scope it.
+            forced = RunContext(**{**ctx.__dict__, "force_eligible": True})
+            try:
+                run_stage("score", args.run, forced)
+                run_stage("select", args.run, forced)
+            except Exception as exc:
+                print(f"scope failed before scoping: {exc}", file=sys.stderr)
+                traceback.print_exc(file=sys.stderr)
+                return 1
     elif args.run is None:
         parser.error("--run DIR is required")
 

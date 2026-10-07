@@ -52,7 +52,10 @@ def run(record: RunRecord, ctx: RunContext) -> None:
     graded_ids: list[str] = []
     try:
         verdicts = _verdicts_from_rows(papers, existing)
-        if verdicts is None:
+        if verdicts is None and ctx.force_eligible:
+            verdicts = [EligibilityVerdict(arxiv_id=p.arxiv_id, eligible=True, reason="", confidence=1.0) for p in papers]
+            candidates.append_rows(out, [candidates.pass_one_row(p, v, "forced") for p, v in zip(papers, verdicts)])
+        elif verdicts is None:
             verdicts = pass_one(papers, llm, cfg.pass_one_batch_size, usage)
             candidates.append_rows(out, [candidates.pass_one_row(p, v, _model_name(llm, ROLE_PASS_ONE)) for p, v in zip(papers, verdicts)])
         graded_ids = [v.arxiv_id for v in verdicts if v.reason != SCORING_ERROR]

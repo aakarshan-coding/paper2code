@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from paper2code.agents.scoper.schemas import InterfaceSpec, ScopeDraft, validate_draft
+from paper2code.agents.scoper.schemas import InterfaceSpec, ScopeDraft, normalise_signature, validate_draft
 
 
 def render_interface_md(interface: InterfaceSpec) -> str:
@@ -15,27 +15,36 @@ def render_interface_md(interface: InterfaceSpec) -> str:
         "```python",
     ]
     for fn in interface.functions:
-        lines += [f"{fn.signature}:", f'    """{fn.doc}"""', ""]
+        lines += [f"{normalise_signature(fn.signature)}:", f'    """{fn.doc}"""', ""]
     for cls in interface.classes:
         lines += [f"class {cls.name}:", f'    """{cls.doc}"""']
         for m in cls.methods:
-            lines += [f"    {m.signature}:", f'        """{m.doc}"""', ""]
+            lines += [f"    {normalise_signature(m.signature)}:", f'        """{m.doc}"""', ""]
         lines.append("")
     lines.append("```")
     return "\n".join(lines) + "\n"
 
 
 def render_stubs(interface: InterfaceSpec) -> str:
-    """A module where every function and method raises NotImplementedError. Used by the stub check."""
-    lines = [f'"""Stub of {interface.module}: every call raises NotImplementedError."""', ""]
+    """A module where every function and method raises NotImplementedError. Used by the stub check.
+
+    Annotations are deferred so type hints naming packages the stub never imports (np.ndarray,
+    torch.Tensor) do not raise at import time on interpreters before 3.14.
+    """
+    lines = [
+        f'"""Stub of {interface.module}: every call raises NotImplementedError."""',
+        "from __future__ import annotations",
+        "",
+        "",
+    ]
     for fn in interface.functions:
-        lines += [f"{fn.signature}:", "    raise NotImplementedError", "", ""]
+        lines += [f"{normalise_signature(fn.signature)}:", "    raise NotImplementedError", "", ""]
     for cls in interface.classes:
         lines.append(f"class {cls.name}:")
-        if not any(m.signature.startswith("def __init__") for m in cls.methods):
+        if not any(normalise_signature(m.signature).startswith("def __init__") for m in cls.methods):
             lines += ["    def __init__(self, *args, **kwargs):", "        pass", ""]
         for m in cls.methods:
-            lines += [f"    {m.signature}:", "        raise NotImplementedError", ""]
+            lines += [f"    {normalise_signature(m.signature)}:", "        raise NotImplementedError", ""]
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 

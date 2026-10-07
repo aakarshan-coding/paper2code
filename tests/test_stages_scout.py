@@ -306,3 +306,16 @@ def test_score_bad_model_output_on_one_paper_yields_error_row(tmp_path):
     p2 = {r["arxiv_id"]: r for r in candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE) if r["pass"] == 2}
     assert p2["2610.03769"]["error"].startswith("scoring_error")
     assert p2["2610.03727"]["testability"] == 3
+
+
+def test_force_eligible_skips_pass_one(tmp_path):
+    rec = _new_run(tmp_path)
+    llm = _scout(set())  # pass one would reject everything
+    ctx = RunContext(config=Config(runs_root=tmp_path, categories=["cs.LG", "stat.ML"], max_fulltext_candidates=2), http=_http(), chat_model=llm, until="select", force_eligible=True)
+    run_stage("fetch", rec.run_dir, ctx)
+    final = run_stage("score", rec.run_dir, ctx)
+    assert final.outcome is None
+    rows = candidates.read_rows(rec.run_dir / candidates.CANDIDATES_FILE)
+    assert all(r["model"] == "forced" and r["eligible"] for r in rows if r["pass"] == 1)
+    assert len([r for r in rows if r["pass"] == 2]) == 2
+    assert not [c for c in llm.calls if c[2] is EligibilityBatch]

@@ -27,6 +27,7 @@ class RunContext:
     until: str | None = None  # stop after this stage (dry run); None runs to the end
     http: Any = None  # test injection: a PoliteClient; None builds one from config
     chat_model: Any = None  # test injection: a ChatModel; None builds one from config
+    force_eligible: bool = False  # local mode: skip scout pass one, treat every fetched paper as eligible
 
 
 StageFn = Callable[[RunRecord, RunContext], None]

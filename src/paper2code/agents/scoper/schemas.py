@@ -51,7 +51,13 @@ class ScopeDraft(BaseModel):
     notes: str
 
 
+def normalise_signature(signature: str) -> str:
+    """Models often write the def line with its trailing colon; accept it and strip it."""
+    return signature.strip().rstrip(":").rstrip()
+
+
 def _signature_ok(signature: str, indent: str = "") -> bool:
+    signature = normalise_signature(signature)
     source = (
         f"{signature}:\n    pass\n"
         if not indent
@@ -86,13 +92,13 @@ def validate_draft(draft: ScopeDraft) -> list[str]:
     if not draft.interface.module.isidentifier():
         problems.append(f"module name {draft.interface.module!r} is not a valid identifier")
     for fn in draft.interface.functions:
-        if not fn.signature.startswith("def ") or not _signature_ok(fn.signature):
+        if not normalise_signature(fn.signature).startswith("def ") or not _signature_ok(fn.signature):
             problems.append(f"function signature {fn.signature!r} does not parse as a def line")
     for cls in draft.interface.classes:
         if not cls.name.isidentifier():
             problems.append(f"class name {cls.name!r} is not a valid identifier")
         for m in cls.methods:
-            if not m.signature.startswith("def ") or not _signature_ok(m.signature, indent="    "):
+            if not normalise_signature(m.signature).startswith("def ") or not _signature_ok(m.signature, indent="    "):
                 problems.append(f"method signature {m.signature!r} in class {cls.name} does not parse as a def line")
     _test_files_ok(draft.public_tests, "public", problems)
     _test_files_ok(draft.hidden_tests, "hidden", problems)

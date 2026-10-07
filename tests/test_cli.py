@@ -139,3 +139,25 @@ def test_run_to_build_still_requires_no_gpu(tmp_path, canary_dir, capsys):
     with pytest.raises(SystemExit) as exc:
         main(["run", "--run", str(run_dir), "--until", "build", "--builder", "stub", "--reference", str(canary_dir / "reference")])
     assert exc.value.code == 2
+
+
+def test_run_until_scope_with_fake_llm_freezes_canary(tmp_path, monkeypatch, capsys):
+    _patch_http(monkeypatch)
+    main(["new-run", "--runs-root", str(tmp_path), "--date", "2026-10-07"])
+    run_dir = tmp_path / "2026-10-07"
+    assert main(["run", "--run", str(run_dir), "--until", "scope", "--llm", "fake"]) == 0
+    rec = RunRecord.load(run_dir)
+    assert rec.stage == "scope" and rec.outcome is None
+    assert (run_dir / "scope" / "manifest.json").exists()
+    assert (run_dir / "scope_attempts.jsonl").exists()
+
+
+def test_scope_by_arxiv_id_creates_scoped_run(tmp_path, monkeypatch, capsys):
+    _patch_http(monkeypatch)
+    assert main(["scope", "--arxiv-id", "2610.03769", "--llm", "fake", "--runs-root", str(tmp_path), "--date", "2026-10-07"]) == 0
+    run_dir = tmp_path / "2026-10-07"
+    rec = RunRecord.load(run_dir)
+    assert rec.stage == "scope" and rec.outcome is None and rec.paper.arxiv_id == "2610.03769"
+    rows = (run_dir / "candidates.jsonl").read_text(encoding="utf-8").splitlines()
+    assert '"model": "forced"' in rows[0]
+    assert "stage: scope" in capsys.readouterr().out

@@ -7,10 +7,11 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 2 of 6: fetch, scout and select work against live arXiv in dry-run
-mode. The scope stage is not implemented yet; a full run still needs `init-run`
-with a hand-written scope directory. Scout calls go to OpenAI and need credits
-on the account; `--llm fake` exercises the plumbing without any model.
+Build step 3 of 6: fetch, scout, select and scope work against live arXiv. A
+scoped run can be carried to completion with the stub builder; the real
+builder (Agent SDK in a Modal sandbox) is step 4. Scout and scoper calls go
+to OpenAI; `--llm fake` runs the whole pipeline on a canned canary assignment
+with no model.
 
 ## Setup
 
@@ -33,6 +34,9 @@ paper2code fetch  --run runs/<date>
 paper2code score  --run runs/<date>
 paper2code score  --arxiv-id 2610.03769                     # fresh run with just this paper
 paper2code select --run runs/<date>
+paper2code scope  --run runs/<date>                         # draft, stub-check, freeze the top pick
+paper2code scope  --arxiv-id 2610.07324                     # fresh run: score (forced eligible), select, scope
+paper2code run --run runs/<date> --until scope --llm fake   # whole front half with the canned canary
 
 # From a hand-written scope to completion (step 1 path)
 paper2code init-run --scope tests/fixtures/canary/scope --paper-id canary-0001 --title "EMA denoising canary"
@@ -40,7 +44,7 @@ paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtu
 ```
 
 A run directory holds `run.json`, `papers.jsonl`, `candidates.jsonl`,
-`selected.json`, then `scope/` (frozen, with `manifest.json`), `workspace/`,
+`selected.json`, `scope_attempts.jsonl`, then `scope/` (frozen, with `manifest.json`), `workspace/`,
 `build.log`, `verdict.json` and `summary.md`. `runs/seen.jsonl` lists every
 paper ever graded. Re-running `run` on an existing run directory resumes at the
 last completed stage. Set `PAPER2CODE_LIVE=1` to include the live arXiv smoke

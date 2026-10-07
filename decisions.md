@@ -264,3 +264,32 @@ The scope stage: take the top shortlisted paper and turn it into a frozen assign
 ### Cost
 
 About 0.30 USD per attempt on the strong model (a full paper in, a whole assignment out), at most three attempts a day.
+
+---
+
+## 2026-10-07 — Step 3 build: what happened
+
+Six tasks, test-first, then a fresh review. The suite went from 146 to 188 tests. The whole pipeline from fetch to `completed` now runs offline on the canned canary, with no model and no GPU, as a standing end-to-end test.
+
+### The live scope, first try: an honest rejection caused by my own validator
+
+Pointed at the step 2 top pick (Scale-Invariant Training for Time Series Foundation Models), the real scoper produced a rich draft in about ninety seconds: nine functions, a small PyTorch forecaster, synthetic data generation, four public and three hidden test files. The manager rejected it as malformed. Every signature "did not parse as a def line". The cause was mine: the model wrote each signature with its trailing colon, and the validator appended another colon before parsing. Cost of the lesson: 0.33 USD, honestly recorded in `scope_attempts.jsonl` with the full reason.
+
+Reading the rejected draft also exposed a second trap before it bit: the interface used numpy and torch types in annotations, and a generated stub module that does not import those packages would fail to load on any Python before 3.14, which would have rejected the scope as "tests do not collect". The stub module now defers annotations.
+
+Both fixes went in test-first, and the second try was accepted: three claim-test seeds, nothing trivial to prune, an estimated 0.40 USD to run the experiment, 0.35 USD of model spend for the draft, 0.49 USD for the whole single-paper run.
+
+### What the real assignment looks like
+
+The spec explains the method in plain language (per-window normalisation, and the one-line difference between computing the loss in scaled space versus raw space), gives an exact synthetic data recipe with three sources at scales 1, 10 and 100, fixes the model, optimizer, batch size and step budget, and states the claim with a tolerance: ScaleIn must beat ScaleCon by at least 20% balanced normalised MSE (the paper says 25%; five points of slack for a small experiment). The hidden tests use unseen seeds, a phase-shifted data slice, and a perturbed learning rate with a looser 15% bar. A competent engineer could implement it from the spec alone. Whether the claim actually holds at this scale is unknown until a builder tries; that is the question the loop exists to ask, and it is step 4's to answer.
+
+### Surprises during the build
+
+- **The end-to-end fake pipeline passed before the CLI task that was supposed to enable it.** Once the scope stage and the fake scoper existed, `run --until scope --llm fake` already worked; only the new `scope` command and the forced-eligible path were genuinely missing. Good news, but a reminder that a test passing before its implementation is a finding about the test.
+- **Plan test counts were wrong again** (the scope-files test file has 11 tests, not 12), which tripped a guard I had written around "N passed" and silently skipped the live rerun once. Guards should check for the absence of failures, not a magic count.
+
+### Decisions recorded during execution
+
+- Signatures are normalised (trailing colon and whitespace stripped) before validation and rendering, rather than rejected.
+- The stub module starts with `from __future__ import annotations`. The test for it cannot prove the point on Python 3.14, where annotations are already lazy, but the builder sandbox may run an older interpreter.
+- `TestFile`, the schema for a test file's name and contents, is marked non-collectable so pytest stops trying to treat it as a test class.

@@ -311,3 +311,24 @@ The reviewer also showed that for the live assignment, an experiment function re
 ### Lesson worth a blog paragraph
 
 Every one of the stub-check gaps had the same shape as the step 1 lesson, one level up: a check that confirmed a symptom ("the test failed") instead of the cause ("the test failed because the thing it tests does not exist yet"). The fix each time was to look at *why* the outcome happened and to re-verify after acting. The second run after pruning is the cheapest insurance in the whole system: a few seconds of pytest to prove a deletion took.
+
+---
+
+## 2026-10-07 — Step 4 plan: the real builder, in two halves
+
+Step 4 is split. Part A (this plan) puts a real Claude coding agent behind the builder interface, running against a workspace directory on the manager's machine. Part B moves that workspace and the GPU test runner onto Modal, which needs an account the author has not set up yet. The split means Part A is fully testable now, including one live build under the Max subscription, and Part B is a pure infrastructure change behind an interface Part A defines.
+
+### The central design decision: the agent gets no built-in tools
+
+The obvious design is to give the agent Claude Code's own file and shell tools and point it at the sandbox. That does not work cleanly: those tools run wherever the agent process runs, so the Agent SDK, the subscription token, and the Modal token would all have to live inside the sandbox with the untrusted code. Instead the agent gets exactly six custom tools served by the manager process: `bash`, `read_file`, `write_file`, `list_files` (each a proxy into a Workspace object that confines paths to the workspace), plus the two manager-owned buttons `run_tests` and `give_up`. The SDK and every secret stay on the manager side; the sandbox only ever sees the agent's actions. Part B swaps the local Workspace for one backed by a Modal sandbox without touching the agent.
+
+The lockdown recipe comes straight from the sibling designloop project, which discovered the hard way that a nested session under a personal account exposes the account's mail, calendar, and drive connectors unless every switch is set: built-in tools off, strict MCP configuration, no user settings loaded, an allowlist, a deny-by-default permission callback, and a check of the session's advertised tool list at startup that aborts the run if anything else is visible.
+
+### Other decisions
+
+- **The manager ends the session, structurally.** The moment `run_tests` reports all public tests passing, the session is marked finished; a hook refuses every further tool call and the tool layer refuses too. The agent cannot keep editing after the decision, and the inspected workspace is exactly the one that passed.
+- **Four caps live in one small module** (test-run count, wall clock, GPU dollars, stall), checked by the session before and after each test run. The stall window survives a crash because it is rebuilt from the append-only build log.
+- **Compaction is handled by restating state.** Every `run_tests` result tells the agent the failing tests, the attempt number against the cap, and the last three attempts, so whatever the SDK's compaction keeps, the next result re-grounds it.
+- **A rate-limit event from the subscription ends the run as an infrastructure error**, with the workspace and log left as they stood, and no retry that day.
+- **The builder sees the spec, the interface, and the public tests, not the paper.** The spec is meant to be sufficient on its own; the paper is 80,000 characters.
+- **Research facts were checked against the installed package.** Two published descriptions of the SDK disagreed with it on whether a rate-limit event and an executable-path option exist; the installed package has both.

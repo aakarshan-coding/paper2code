@@ -113,8 +113,12 @@ class BuildSession:
         self.finish_reason = reason
 
 
+class _AgentFailed(Exception):
+    """The Agent SDK session could not start or broke on this machine (Modal mode only; locally it is a crash)."""
+
+
 def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> None:
-    from paper2code.agents.builder.agent import RateLimited
+    from paper2code.agents.builder.agent import AgentSessionError, RateLimited
     from paper2code.sandbox.factory import make_runner
     from paper2code.sandbox.modal_session import SandboxFailed, modal_build_session
 
@@ -153,10 +157,16 @@ def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> No
                     _build(session, workspace_api)
                 except (BuildFinished, RateLimited):
                     raise
+                except AgentSessionError as exc:
+                    raise _AgentFailed(str(exc)) from exc
                 except Exception as exc:
-                    # Anything else inside the sandbox session (a lost connection, a remote failure) is the
-                    # sandbox's fault as far as the record is concerned; the message says what it was.
-                    raise SandboxFailed(f"{type(exc).__name__}: {exc}") from exc
+                    # The SDK failing (it runs on this machine) is the agent's problem; anything else inside
+                    # the sandbox session (a lost connection, a remote failure) is the sandbox's. The message
+                    # names the real exception either way.
+                    message = f"{type(exc).__name__}: {exc}"
+                    if type(exc).__module__.startswith("claude_agent_sdk"):
+                        raise _AgentFailed(message) from exc
+                    raise SandboxFailed(message) from exc
         else:
             session = BuildSession(record, make_runner(ctx), log, gpu_usd_per_hour=ctx.config.gpu_usd_per_hour)
             _build(session, None)
@@ -167,6 +177,9 @@ def run_with_builder(record: RunRecord, ctx: RunContext, builder: Builder) -> No
         return
     except SandboxFailed as exc:
         _end_as_error("sandbox_failed", str(exc))
+        return
+    except _AgentFailed as exc:
+        _end_as_error("agent_failed", str(exc))
         return
     except Exception as exc:
         log.append({"event": "error", "message": f"{type(exc).__name__}: {exc}"})

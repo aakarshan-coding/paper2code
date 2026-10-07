@@ -15,7 +15,8 @@ def _local_remote(payload: bytes, timeout_s: int) -> dict:
 def test_runner_round_trips_through_a_remote_callable(canary_dir):
     runner = ModalTestRunner(timeout_s=120, max_payload_bytes=10_000_000, remote=_local_remote)
     r = runner.run(canary_dir / "reference", canary_dir / "scope" / "tests" / "public")
-    assert r.all_passed and len(r.passed) == 7 and r.gpu_seconds == r.duration_s > 0
+    assert r.all_passed and len(r.passed) == 7 and r.duration_s > 0
+    assert r.gpu_seconds > r.duration_s  # billed time is the whole call, not just pytest's part of it
     assert len(r.workspace_sha256) == 64
 
 

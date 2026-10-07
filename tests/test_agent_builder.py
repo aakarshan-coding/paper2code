@@ -2,6 +2,7 @@
 exercised against the real types; only the transport is faked."""
 import asyncio
 import dataclasses
+import sys
 from contextlib import asynccontextmanager
 
 import pytest
@@ -244,3 +245,27 @@ def test_resume_prompt_mentions_prior_work(tmp_path, canary_dir):
     builder = AgentBuilder(Config(), client_factory=_factory(client))
     build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
     assert "resumed session" in client.queries[0] and "3 of 25" in client.queries[0] and "canary_method.py" in client.queries[0]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the selector event loop policy is a Windows concern")
+def test_driver_can_spawn_subprocesses_even_after_modal_changed_the_loop_policy(tmp_path, canary_dir, monkeypatch):
+    """Importing modal on Windows installs the selector event loop policy, which cannot start a
+    subprocess; the Agent SDK then fails with 'Failed to start Claude Code'. The driver must pick
+    a loop that can, whatever the policy says."""
+    rec, ctx = _wire(tmp_path, canary_dir)
+    monkeypatch.setattr(asyncio, "get_event_loop_policy", lambda: asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    try:
+        class SpawningClient(FakeClient):
+            async def query(self, prompt):
+                proc = await asyncio.create_subprocess_exec(sys.executable, "-c", "print('ok')", stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)  # pytest's captured handles are not inheritable
+                out, _ = await proc.communicate()
+                self.spawned = out.decode().strip()
+                await super().query(prompt)
+
+        client = SpawningClient([[_init(ALLOWED), _result()]])
+        builder = AgentBuilder(Config(), client_factory=_factory(client))
+        build_stage.run_with_builder(RunRecord.load(rec.run_dir), ctx, builder)
+        assert client.spawned == "ok"
+    finally:
+        asyncio.set_event_loop_policy(None)

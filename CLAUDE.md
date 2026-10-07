@@ -38,8 +38,8 @@ src/paper2code/
 tests/                 pytest; tests/fixtures/canary is the EMA denoising canary assignment
 ```
 
-Build order (spec section 16): 1 skeleton, 2 scout, 3 scoper are done; 4 builder (Agent SDK in
-a Modal sandbox), 5 inspector, 6 schedule and dashboard remain.
+Build order (spec section 16): 1 skeleton, 2 scout, 3 scoper, 4 builder (Agent SDK, Modal
+sandbox and GPU test runner) are done; 5 inspector, 6 schedule and dashboard remain.
 
 ## How work is done here
 
@@ -79,8 +79,15 @@ script with the Write tool and run that.
   `claude setup-token`. `ANTHROPIC_API_KEY` must never be set in the builder's environment; it
   silently overrides the subscription token.
 - Model-written code (scoped tests, builder output) is untrusted. The local runner scrubs
-  credentials from its environment and runs in an isolated interpreter; the real sandbox is
-  Modal in step 4.
+  credentials from its environment and runs in an isolated interpreter; without `--no-gpu` the
+  agent works in a Modal sandbox (no secrets, network allowlist) and every test run executes in
+  a Modal GPU function.
+- Modal: the token is in `~/.modal.toml`. Run
+  `python -m modal deploy src/paper2code/sandbox/modal_app.py` after changing the images or the
+  GPU type (`PAPER2CODE_GPU`); GPU time is billed per `run_tests` call. On Windows set
+  `PYTHONUTF8=1` for the deploy, or the CLI's progress output crashes on the console encoding.
+  Importing `modal` on Windows switches asyncio to the selector loop, which cannot spawn
+  subprocesses; the agent driver picks the proactor loop explicitly for that reason.
 - Be polite to arXiv: the `PoliteClient` identifies itself, waits three seconds between requests,
   and backs off on 429/503. The export API throttles quickly; the RSS feeds do not.
 

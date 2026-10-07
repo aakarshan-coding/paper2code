@@ -59,4 +59,6 @@ class ModalTestRunner:
             if type(exc).__name__.endswith("TimeoutError"):
                 return TestRunResult((), (), -1, True, elapsed, elapsed, f"remote test function timed out: {exc}", "")
             raise RemoteError(f"{type(exc).__name__}: {exc}") from exc
-        return result_from_dict(d, gpu_seconds=float(d.get("duration_s", 0.0)))
+        # Modal bills the container for the whole call, not just pytest's part of it; the manager-side
+        # time is the upper bound a budget cap should count.
+        return result_from_dict(d, gpu_seconds=time.monotonic() - start)

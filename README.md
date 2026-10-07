@@ -7,10 +7,11 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 4a of 6: a real Claude coding agent (Agent SDK, Max subscription) builds a scoped
-assignment in a local workspace through six confined tools, with the four caps and rate-limit
-handling. Step 4b moves the workspace and the GPU test runner onto Modal. The stub builder
-remains for offline tests.
+Build step 4b of 6: the builder runs in a Modal sandbox (CPU only, no secrets, outbound network
+limited to the package index and hosts named in the spec) and every test run executes in a Modal
+GPU function that receives a snapshot of the workspace plus the tests; the hidden tests are never
+present where the agent runs. `--no-gpu` keeps everything local. The stub builder remains for
+offline tests. Step 5 is the inspector.
 
 ## Setup
 
@@ -44,6 +45,23 @@ paper2code run --run runs/<date> --no-gpu --builder agent        # real agent, l
 PAPER2CODE_LIVE_BUILD=1 pytest tests/test_live_agent.py -q -s     # opt-in live build of the canary
 ```
 
+## Modal
+
+Without `--no-gpu`, the agent works inside a Modal sandbox and every `run_tests` call (and the
+inspector's hidden run) executes in a deployed Modal GPU function.
+
+```bash
+python -m modal setup                                           # once: login, writes ~/.modal.toml
+python -m modal deploy src/paper2code/sandbox/modal_app.py      # once per change to the images or GPU type
+PAPER2CODE_GPU=L4 python -m modal deploy src/paper2code/sandbox/modal_app.py   # a different GPU
+paper2code run --run runs/<date> --builder agent                # agent in the sandbox, tests on the GPU
+PAPER2CODE_LIVE_MODAL=1 pytest tests/test_live_modal.py -q -s   # opt-in live checks (a little GPU time)
+```
+
+On Windows, set `PYTHONUTF8=1` for the deploy; the CLI's progress output otherwise crashes on the
+console encoding. Set a spend limit in the Modal dashboard; the per-run GPU budget in `config.yaml`
+is a soft cap enforced from the manager's side.
+
 A run directory holds `run.json`, `papers.jsonl`, `candidates.jsonl`,
 `selected.json`, `scope_attempts.jsonl`, then `scope/` (frozen, with `manifest.json`), `workspace/`,
 `build.log`, `verdict.json` and `summary.md`. `runs/seen.jsonl` lists every
@@ -53,9 +71,10 @@ test in `pytest`.
 
 The agent builder uses the logged-in `claude` binary (or `CLAUDE_CODE_OAUTH_TOKEN` from
 `claude setup-token` when unattended). Never set `ANTHROPIC_API_KEY`; it would silently override
-the subscription. In local mode the agent's shell runs on this machine with credentials scrubbed
-from its environment and paths confined to the workspace; use it only for assignments you trust.
-The sandboxed workspace is step 4b.
+the subscription. In local mode (`--no-gpu`) the agent's shell runs on this machine with
+credentials scrubbed from its environment and paths confined to the workspace; use it only for
+assignments you trust. Without the flag it runs in a Modal sandbox and cannot reach this machine
+at all.
 
 ## Known limitations at this build step
 
@@ -69,4 +88,8 @@ The sandboxed workspace is step 4b.
 - In local mode nothing stops a builder from writing into `scope/`, but the
   manifest hash and the passing-workspace hash are anchored in `run.json`,
   which the builder never receives, so edits, re-freezes and post-pass
-  workspace drift all end as `tests_tampered`.
+  workspace drift all end as `tests_tampered`. In Modal mode the builder
+  cannot see `scope/` at all.
+- GPU seconds are measured from the manager's side of each remote call, so
+  they include upload and cold start; the figure is an upper bound on what
+  Modal bills, which is the right direction for a budget cap.

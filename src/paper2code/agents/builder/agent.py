@@ -7,6 +7,7 @@ import asyncio
 import os
 import re
 import shutil
+import sys
 import tempfile
 import warnings
 from contextlib import asynccontextmanager
@@ -196,6 +197,15 @@ async def drive(prompt: str, session: BuildSession, options, client_factory, log
             await client.query(NUDGE)
 
 
+def _run_async(coro):
+    """asyncio.run on a loop that can start subprocesses. On Windows, importing modal installs the
+    selector event loop policy, under which the SDK cannot spawn the CLI ("Failed to start Claude
+    Code"); the proactor loop is chosen explicitly so the policy does not matter."""
+    if sys.platform == "win32":
+        return asyncio.run(coro, loop_factory=asyncio.ProactorEventLoop)
+    return asyncio.run(coro)
+
+
 def _module_name(interface_md: str) -> str:
     m = re.search(r"Module `(\w+)`", interface_md)
     return m.group(1) if m else "solution"
@@ -240,7 +250,7 @@ class AgentBuilder:
         scratch = tempfile.mkdtemp(prefix="p2c-agent-")
         try:
             options = build_options(tools, self.config, session, log, cwd=scratch)
-            asyncio.run(drive(prompt, session, options, self.client_factory, log, usage))
+            _run_async(drive(prompt, session, options, self.client_factory, log, usage))
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
             # Whatever happened (pass, cap, rate limit, crash), the tokens seen so far are recorded.

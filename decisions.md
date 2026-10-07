@@ -393,3 +393,30 @@ Step 4a left the agent working in a directory on this machine. Step 4b moves two
 - The GPU type and the function timeout are fixed at deploy time from environment variables. Changing the GPU is a redeploy, not a code change.
 - The builder's image installs the CPU build of PyTorch to stay small; the test image installs the default build so CUDA is available on the GPU.
 - A live probe against the real account before planning confirmed every API call the plan relies on: sandbox creation in about 1.5 seconds, exec with a timeout, file reads and writes, the domain allowlist blocking a non-listed host, termination.
+
+## 2026-10-07: Step 4b built, the builder in the cloud
+
+Five tasks, test-first, then a fresh review. The suite went from 245 to 271 tests, plus three opt-in live tests against the real Modal account. For the first time the whole loop ran with the agent working somewhere other than this machine.
+
+### What happened in the live runs
+
+The deployed GPU function ran the canary's hidden suite in about nine seconds end to end, half a second of which was pytest; the rest was the container's cold start. The stub builder with remote tests reached `completed`. Then the real thing: a Claude agent session on this machine, its six tools proxied into a fresh Modal sandbox, wrote the canary module there, pressed `run_tests` once, the manager snapshotted the sandbox and sent the snapshot plus the public tests to the GPU function, all seven passed, the manager ended the session, exported the workspace back into the run directory, destroyed the sandbox, and the inspector's hidden run on the same GPU function passed too. Outcome `completed`, one test run, about seven GPU-seconds, twelve thousand tokens of subscription usage, under a minute of wall time. The hidden tests were never inside the sandbox.
+
+### Decisions recorded during execution
+
+- **The scope stage's stub check stays local.** As soon as `--no-gpu` became optional, the stub check (which had been using the same runner factory as the build) tried to reach the deployed function from inside the unit suite. It only needs tests to fail on stubs, never a GPU, and step 3 already decided it runs locally, so it now constructs the local runner directly. A run that stops before the build never touches Modal.
+- **GPU seconds are counted from the manager's side of the call,** not from pytest's own clock inside the container. Modal bills the container for the whole call, including unpacking and start-up, so the manager-side time is the upper bound a budget cap should use. Under-counting is the failure that matters for a cap.
+- **Shell commands inside the sandbox are relative to the working directory** (`find .`, `tar ... .`) rather than embedding the absolute root, and the exported tarball is re-prefixed in Python rather than with GNU tar's `--transform`. The real sandbox always runs in `/work`, so nothing changes in production, and the test double no longer depends on which tar is installed.
+- **An agent failure is not a sandbox failure.** When the Agent SDK cannot start the CLI (that happens on this machine), the record now says `agent_failed`; `sandbox_failed` is reserved for the sandbox or the remote function breaking. Both are infrastructure outcomes, but a reader of the record should be pointed at the right side.
+- Two step 2 tests that asserted `--no-gpu` was mandatory were deleted; the flag is optional by design now.
+
+### Two Windows lessons worth a blog paragraph
+
+The first live agent-in-sandbox run failed with "Failed to start Claude Code" and nothing else. The sandbox had been created, exported, and destroyed correctly; the Agent SDK simply could not launch the CLI. The cause: importing the Modal client on Windows switches asyncio to the "selector" event loop, and that loop cannot spawn subprocesses. Nothing in the step 4a tests had imported Modal, so the problem only appeared once both libraries were in the same process. The driver now chooses the "proactor" loop explicitly, whatever the policy says. The general lesson is that two libraries can each be correct and still break each other through global state, and the symptom will surface in whichever one runs second.
+
+The second was smaller: the `modal deploy` command crashed on this machine because its progress output contains a character the Windows console encoding cannot represent, and Modal's side then reported the image build as "terminated due to external shut-down". Setting `PYTHONUTF8=1` fixed it. The image build itself, with CUDA PyTorch, took about a minute on Modal's side.
+
+### Deferred
+
+- The deploy is a manual step (`python -m modal deploy ...`). Step 6's scheduler should check the function exists before a run starts, so a forgotten deploy fails before any model spend rather than at the first `run_tests`.
+- The sandbox's outbound allowlist is widened by every host that appears in a URL in `spec.md`. That is what the spec asks for (the dataset download), but it means a scoper that writes a stray link widens the allowlist. The inspector (step 5) should list the allowed hosts in its report.

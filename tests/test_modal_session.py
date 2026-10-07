@@ -159,3 +159,24 @@ def test_agent_builder_uses_workspace_api_when_given(tmp_path, canary_dir):
     builder.on_tools_ready = lambda tools: holder.__setitem__("ws", tools.workspace)
     builder.build(ctx)
     assert holder["ws"] is other
+
+
+def test_agent_startup_failure_in_modal_mode_is_agent_failed_not_sandbox_failed(tmp_path, canary_dir, monkeypatch):
+    """The SDK failing to start the CLI is the manager's machine, not the sandbox; the record says which."""
+    import paper2code.sandbox.modal_session as ms
+    from paper2code.agents.builder.agent import AgentSessionError
+
+    rec = _seed_run(tmp_path, canary_dir)
+    holder = {}
+    monkeypatch.setattr(ms, "create_builder_sandbox", _factory(tmp_path, holder))
+    monkeypatch.setattr(ms, "ModalWorkspace", _workspace_cls)
+    monkeypatch.setattr(ms, "ModalTestRunner", _runner_cls)
+
+    class CannotStart:
+        def build(self, ctx):
+            raise AgentSessionError("Failed to start Claude Code")
+
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), _ctx(tmp_path), CannotStart())
+    final = RunRecord.load(rec.run_dir)
+    assert final.outcome is Outcome.ERROR and final.error.reason == "agent_failed" and "start Claude Code" in final.error.message
+    assert holder["sandbox"].terminated

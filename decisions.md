@@ -332,3 +332,30 @@ The lockdown recipe comes straight from the sibling designloop project, which di
 - **A rate-limit event from the subscription ends the run as an infrastructure error**, with the workspace and log left as they stood, and no retry that day.
 - **The builder sees the spec, the interface, and the public tests, not the paper.** The spec is meant to be sufficient on its own; the paper is 80,000 characters.
 - **Research facts were checked against the installed package.** Two published descriptions of the SDK disagreed with it on whether a rate-limit event and an executable-path option exist; the installed package has both.
+
+---
+
+## 2026-10-07 — Step 4a build: the first real builder run
+
+Six tasks, test-first, then a fresh review. The suite went from 200 to 236 tests. For the first time a real Claude coding agent did the builder's job.
+
+### What the agent actually did
+
+Given the canary assignment (the EMA denoising paper from step 1), the locked-down agent saw exactly six tools in its session, read the spec and interface from its first prompt, wrote the module in one go, ran a quick sanity check of its own through the bash tool, and then pressed `run_tests` once. All seven public tests passed, the manager ended the session on the spot, and the inspector's hidden tests passed too. Outcome `completed`, one test run of the twenty-five allowed, about 1,300 tokens of subscription usage, sixteen seconds end to end. The agent's closing message summarised what it had built and noted it had used one run of twenty-five, which means it read the cap text in the result and understood it.
+
+That happened twice. The first time was by accident: a step 2 test had used `--builder agent` as a stand-in for "not implemented yet", and once the builder existed, the unit suite quietly launched a real session. It passed, which was reassuring, but a unit suite must never spend subscription time on its own. The test now stubs the builder. The second run was the deliberate, opt-in live test, with the same result.
+
+### The lockdown held
+
+The session's advertised tool list was exactly the six builder tools and nothing else: no built-in file or shell tools, none of the account's connectors. That check runs before the first prompt and aborts the run if anything extra is visible; it is the single most important safety property of running an agent under a personal account, learned in the sibling project, and it is now verified on every build.
+
+### Decisions recorded during execution
+
+- The rate-limit handling landed one task early because the rewritten build session needed the exception type; a placeholder module held it until the real driver replaced the file.
+- The rate-limit test observes the outcome one layer up (the run ends as `error/rate_limited`) rather than catching the exception, since the stage already handles it.
+- The SDK's warning that the allowlist shadows the permission callback is silenced where the options are built. The allowlist auto-approves the six tools; the pre-tool hook still gates every call. pytest resets module-level warning filters, which is why the suppression had to be local.
+- Two prompt sentences were reworded so lowercase keywords the tests look for ("hidden", "hardcoding") appear as written.
+
+### Lesson worth a blog paragraph
+
+The accidental live run is the lesson. A placeholder that raises "not implemented" is a perfectly good test double until the day it is implemented, at which point every test that leaned on it silently starts exercising the real thing. For a builder that spends money, that is a real risk. The fix is cheap and general: any test that touches a path that can reach a paid service stubs that path explicitly, so the test says what it means instead of relying on what does not exist yet.

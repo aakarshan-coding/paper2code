@@ -7,11 +7,10 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 3 of 6: fetch, scout, select and scope work against live arXiv. A
-scoped run can be carried to completion with the stub builder; the real
-builder (Agent SDK in a Modal sandbox) is step 4. Scout and scoper calls go
-to OpenAI; `--llm fake` runs the whole pipeline on a canned canary assignment
-with no model.
+Build step 4a of 6: a real Claude coding agent (Agent SDK, Max subscription) builds a scoped
+assignment in a local workspace through six confined tools, with the four caps and rate-limit
+handling. Step 4b moves the workspace and the GPU test runner onto Modal. The stub builder
+remains for offline tests.
 
 ## Setup
 
@@ -41,6 +40,8 @@ paper2code run --run runs/<date> --until scope --llm fake   # whole front half w
 # From a hand-written scope to completion (step 1 path)
 paper2code init-run --scope tests/fixtures/canary/scope --paper-id canary-0001 --title "EMA denoising canary"
 paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
+paper2code run --run runs/<date> --no-gpu --builder agent        # real agent, local workspace (no sandbox)
+PAPER2CODE_LIVE_BUILD=1 pytest tests/test_live_agent.py -q -s     # opt-in live build of the canary
 ```
 
 A run directory holds `run.json`, `papers.jsonl`, `candidates.jsonl`,
@@ -49,6 +50,12 @@ A run directory holds `run.json`, `papers.jsonl`, `candidates.jsonl`,
 paper ever graded. Re-running `run` on an existing run directory resumes at the
 last completed stage. Set `PAPER2CODE_LIVE=1` to include the live arXiv smoke
 test in `pytest`.
+
+The agent builder uses the logged-in `claude` binary (or `CLAUDE_CODE_OAUTH_TOKEN` from
+`claude setup-token` when unattended). Never set `ANTHROPIC_API_KEY`; it would silently override
+the subscription. In local mode the agent's shell runs on this machine with credentials scrubbed
+from its environment and paths confined to the workspace; use it only for assignments you trust.
+The sandboxed workspace is step 4b.
 
 ## Known limitations at this build step
 

@@ -168,3 +168,33 @@ Why it belongs in this journal: it reuses paper2code's central ideas, and it tau
 - **Running an agent under a personal subscription needs lockdown.** A nested Agent SDK session loaded the account's connectors (mail, calendar, drive) as available tools. The designloop driver switches off built-in tools, uses strict MCP configuration, and aborts at startup if the session advertises any tool outside its own allowlist. **The step 4 builder should do the same.**
 - **The Windows launcher matters.** The SDK refuses `.cmd` shims and needs a native executable path.
 - **OpenAI credits were exhausted on the day.** The paper2code spec's hybrid split (OpenAI for scout, scoper and inspector) needs those credits topped up before steps 2, 3 and 5.
+
+---
+
+## 2026-10-06 — Step 2 plan: fetch, scout, select
+
+### What step 2 is
+
+The first three stages of the daily loop: pull the day's new papers from arXiv, grade them with a two-pass "scout" (a cheap model reads every abstract, a strong model reads the full text of the ten most promising), and rank the results with a selection policy. The output of a day is a shortlist of up to three papers, with every grade recorded whether the paper made the cut or not.
+
+### What was checked before planning, and what it changed
+
+- **arXiv has daily RSS feeds per category** with the abstract inline, and each item is tagged `new`, `cross` (cross-listed from another category), or `replace` (a revision of an old paper). On the planning day cs.LG alone announced 366 new papers plus 234 cross-lists. Decision: fetch from the RSS feeds, one request per category, keep `new` and `cross`, drop `replace`. This is a better fit for "last 24 hours" than querying the search API by date.
+- **arXiv's search API throttled this connection** within a few requests (503, then "429 Rate exceeded"), clearing after a half-minute pause. Decision: a polite HTTP client that identifies itself with a contact address, waits three seconds between requests, and backs off for 5, 10, 20, 40 seconds on 429 or 503 before giving up. The search API is used only to look up a single paper by id for local experiments.
+- **arXiv's HTML rendering of a paper exists for current submissions** and has a clean `<article>` element. Decision: full text comes from the HTML, with the PDF as fallback, cut at 80,000 characters (about 20,000 tokens) to cap the cost of the strong-model pass.
+- **OpenAI prices on the day:** gpt-5.4-nano at 0.20/1.25 USD per million tokens in/out, gpt-5.5 at 5.00/30.00. Decision: nano for the abstract pass (about five cents for 500 abstracts), gpt-5.5 for the full-text pass, the scoper and the inspector (about a dollar for ten papers). Both ids and prices live in config, and every call's tokens and dollars are added to the run record.
+- **The OpenAI account has no credits.** A one-token test request came back `credit_balance_exhausted`. This blocks the one thing step 2 is supposed to prove, a live scoring run. Decision: build everything behind a small model interface with a fake implementation, so the whole pipeline is tested offline and can run against real arXiv data with `--llm fake`; the live scoring check is the last step of the plan and is marked blocked until credits are added.
+
+### Design decisions
+
+- **The scout is two pure functions over a model interface.** Pass one takes a batch of papers and returns one verdict per paper; pass two takes one paper and its full text and returns a scorecard. Neither touches files. The stage module around them does the file writing.
+- **The model can be wrong about which papers it answered.** If it skips an id, that paper is recorded with reason `scoring_error` rather than silently dropped; if it invents an id, the verdict is ignored. If it returns a reason outside the fixed vocabulary, the reason is normalised to `not_a_method`; out-of-range numbers are clamped. Structured output guarantees the shape, not the content.
+- **One row per paper per pass** in `candidates.jsonl`, append-only. A paper whose full text cannot be fetched gets a pass-two row with an error note, and the others are still scored.
+- **An API failure mid-score ends the run as `error` with reason `api_error`**, keeps every row written so far, and records the tokens already spent. It does not retry the same day; tomorrow is a new run.
+- **"Seen" means graded.** Every paper that went through pass one is appended to `runs/seen.jsonl` so it is never graded twice.
+- **The policy works on plain dictionaries** (the pass-two rows) and returns the shortlist in order. `select_v1_testability`: drop anything over budget, sort by testability then by cost.
+- **A new `--until` option** stops the pipeline after a named stage, which is what "dry-run mode" means in practice. The GPU and builder flags are only required when the run would actually reach the build stage.
+
+### Open question for the author
+
+Live scoring needs OpenAI credits (roughly a dollar a day at these settings). The alternative is to move the scout onto the Claude subscription via the Agent SDK, as the sibling designloop project did when it hit the same wall. That would change the spec's hybrid split and the cost model, so it is a decision, not a default.

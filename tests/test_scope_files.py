@@ -136,3 +136,11 @@ def test_stubs_with_third_party_annotations_import_without_those_packages(tmp_pa
     spec.loader.exec_module(mod)  # must not raise NameError on np/torch
     with pytest.raises(NotImplementedError):
         mod.make_windows(None)
+
+
+def test_validate_draft_rejects_multi_statement_signatures():
+    for bad in ("def f(x): return 1\nif False", "def f(x): return 1\nif False: pass", "def f(x): return 1", "def f(x):\n    pass\nimport os"):
+        iface = InterfaceSpec(module="m", functions=[FunctionSpec(signature=bad, doc="")], classes=[])
+        assert any("signature" in p for p in validate_draft(_draft(interface=iface))), bad
+    iface = InterfaceSpec(module="m", functions=[], classes=[ClassSpec(name="C", doc="", methods=[MethodSpec(signature="def m(self): return 1", doc="")])])
+    assert any("signature" in p for p in validate_draft(_draft(interface=iface)))

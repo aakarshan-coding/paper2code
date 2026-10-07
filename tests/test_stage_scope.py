@@ -153,3 +153,40 @@ def test_scope_trivial_tests_are_pruned_before_freeze(tmp_path):
     assert rows[0]["removed_tests"] == ["test_planted::test_trivial"]
     assert "test_trivial" not in (rec.run_dir / "scope" / "tests" / "public" / "test_planted.py").read_text(encoding="utf-8")
     assert verify_manifest(rec.run_dir / "scope", final.scope_manifest_sha256) == []  # frozen after pruning
+
+
+def test_scope_refuses_to_proceed_when_old_scope_dir_cannot_be_removed(tmp_path, monkeypatch):
+    rec = _seed_selected(tmp_path)
+    (rec.run_dir / "scope").mkdir()
+    (rec.run_dir / "scope" / "stale.txt").write_text("from an earlier paper", encoding="utf-8")
+    import paper2code.manager.stages.scope as scope_mod
+
+    monkeypatch.setattr(scope_mod.shutil, "rmtree", lambda *a, **k: None)
+    with pytest.raises(RuntimeError, match="could not remove"):
+        run_stage("scope", rec.run_dir, _ctx(tmp_path, _scoper()))
+    assert read_attempts(rec.run_dir) == []
+
+
+def test_crash_during_stub_check_does_not_rebill_the_draft(tmp_path, monkeypatch):
+    import paper2code.manager.stages.scope as scope_mod
+
+    rec = _seed_selected(tmp_path)
+    llm = _scoper()
+    real_check = scope_mod.run_stub_check
+    state = {"n": 0}
+
+    def flaky_check(*a, **k):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise RuntimeError("killed during stub check")
+        return real_check(*a, **k)
+
+    monkeypatch.setattr(scope_mod, "run_stub_check", flaky_check)
+    ctx = _ctx(tmp_path, llm)
+    with pytest.raises(RuntimeError, match="killed"):
+        run_stage("scope", rec.run_dir, ctx)
+    assert len(llm.calls) == 1
+    final = run_stage("scope", rec.run_dir, ctx)
+    assert final.outcome is None and final.paper.arxiv_id == "2610.03769"
+    assert len(llm.calls) == 1  # the persisted draft was reused; no second scoper call
+    assert [r["arxiv_id"] for r in read_attempts(rec.run_dir)] == ["2610.03769"]

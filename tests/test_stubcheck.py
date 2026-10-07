@@ -107,3 +107,62 @@ def test_stub_check_leaves_no_workspace_in_scope(tmp_path):
     run_stub_check(scope, CANARY_DRAFT.interface, RUNNER, min_seeds=3)
     assert sorted(p.name for p in scope.iterdir()) == ["interface.md", "spec.md", "tests"]
     assert not any(p.name == "canary_method.py" for p in scope.rglob("*"))
+
+
+def test_class_based_tests_are_pruned_and_claim_classes_count(tmp_path):
+    units = TestFile(path="test_units.py", content=(
+        "from canary_method import ema\n\n\nclass TestEma:\n    def test_real(self):\n        assert ema([1.0], 0.5) == [1.0]\n\n"
+        "    def test_trivial(self):\n        assert True\n"
+    ))
+    claim = TestFile(path="test_claim.py", content=(
+        "import pytest\nfrom canary_method import run_experiment\n\n\nclass TestClaim:\n"
+        "    @pytest.mark.parametrize('seed', [0, 1, 2])\n    def test_claim(self, seed):\n        assert run_experiment(seed)['method_mse'] < 1\n"
+    ))
+    draft = CANARY_DRAFT.model_copy(update={"public_tests": [units, claim]})
+    scope = _scope(tmp_path, draft)
+    r = run_stub_check(scope, draft.interface, RUNNER, min_seeds=3)
+    assert r.reject_reason is None, r
+    assert r.removed == ["test_units.TestEma::test_trivial"]
+    assert len(r.claim_test_ids) == 3
+    src = (scope / "tests" / "public" / "test_units.py").read_text(encoding="utf-8")
+    assert "test_trivial" not in src and "test_real" in src
+
+
+def test_skipped_claim_test_rejects_scope(tmp_path):
+    claim = TestFile(path="test_claim.py", content=(
+        "import pytest\nfrom canary_method import run_experiment\n\n\n@pytest.mark.skip(reason='no gpu here')\n"
+        "@pytest.mark.parametrize('seed', [0, 1, 2])\ndef test_claim(seed):\n    assert run_experiment(seed)['method_mse'] < 1\n"
+    ))
+    draft = CANARY_DRAFT.model_copy(update={"public_tests": [CANARY_DRAFT.public_tests[0], claim]})
+    r = run_stub_check(_scope(tmp_path, draft), draft.interface, RUNNER, min_seeds=3)
+    assert r.reject_reason == "tests_skipped"
+
+
+def test_failure_unrelated_to_stubs_rejects_scope(tmp_path):
+    claim = TestFile(path="test_claim.py", content=(
+        "import pytest\n\n\n@pytest.mark.parametrize('seed', [0, 1, 2])\ndef test_claim(seed):\n    assert False\n"
+    ))
+    draft = CANARY_DRAFT.model_copy(update={"public_tests": [CANARY_DRAFT.public_tests[0], claim]})
+    r = run_stub_check(_scope(tmp_path, draft), draft.interface, RUNNER, min_seeds=3)
+    assert r.reject_reason == "tests_fail_for_other_reasons"
+    assert any("test_claim" in t for t in r.wrong_failures)
+
+
+def test_empty_hidden_suite_rejects_scope(tmp_path):
+    draft = CANARY_DRAFT.model_copy(update={"hidden_tests": [TestFile(path="test_h.py", content="import pytest\n")]})
+    r = run_stub_check(_scope(tmp_path, draft), draft.interface, RUNNER, min_seeds=3)
+    assert r.reject_reason == "no_hidden_tests"
+
+
+def test_hidden_suite_timeout_rejects_scope(tmp_path):
+    hidden = TestFile(path="test_h.py", content="import time\nfrom canary_method import ema\n\n\ndef test_slow():\n    time.sleep(30)\n    assert ema([1.0], 0.5)\n")
+    draft = CANARY_DRAFT.model_copy(update={"hidden_tests": [hidden]})
+    r = run_stub_check(_scope(tmp_path, draft), draft.interface, LocalTestRunner(timeout_s=3), min_seeds=3)
+    assert r.reject_reason == "stub_check_timeout"
+
+
+def test_unprunable_passing_test_rejects_scope(tmp_path):
+    dyn = TestFile(path="test_dyn.py", content="def _make():\n    def test_dyn():\n        assert True\n    return test_dyn\n\n\ntest_dyn = _make()\n")
+    draft = _with_public(CANARY_DRAFT, dyn)
+    r = run_stub_check(_scope(tmp_path, draft), draft.interface, RUNNER, min_seeds=3)
+    assert r.reject_reason == "prune_failed"

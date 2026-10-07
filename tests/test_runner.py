@@ -162,3 +162,42 @@ def test_not_implemented_is_a_failure_not_an_error(tmp_path):
     result = LocalTestRunner(timeout_s=60).run(ws, tests)
     assert result.errored == ()
     assert result.failed == ("test_ok::test_a",)
+
+
+def test_skipped_tests_and_failure_messages_are_reported(tmp_path):
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    _write(ws / "stub.py", "def f(x):\n    raise NotImplementedError\n")
+    _write(tests / "test_mix.py", """
+        import pytest
+        from stub import f
+        def test_stub(): assert f(1) == 2
+        def test_plain(): assert False
+        @pytest.mark.skip(reason="no gpu")
+        def test_skip(): assert f(1)
+    """)
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.skipped == ("test_mix::test_skip",)
+    assert "test_mix::test_skip" in result.failed
+    assert result.messages["test_mix::test_stub"].startswith("NotImplementedError")
+    assert "AssertionError" in result.messages["test_mix::test_plain"] or "assert False" in result.messages["test_mix::test_plain"]
+
+
+def test_secrets_are_stripped_from_the_test_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-should-not-leak")
+    monkeypatch.setenv("MODAL_TOKEN_ID", "ak-should-not-leak")
+    monkeypatch.setenv("MY_SERVICE_SECRET", "hush")
+    monkeypatch.setenv("HARMLESS_VAR", "fine")
+    ws = tmp_path / "ws"
+    tests = tmp_path / "tests"
+    ws.mkdir()
+    _write(tests / "test_env.py", """
+        import os
+        def test_env():
+            assert "OPENAI_API_KEY" not in os.environ
+            assert "MODAL_TOKEN_ID" not in os.environ
+            assert "MY_SERVICE_SECRET" not in os.environ
+            assert os.environ.get("HARMLESS_VAR") == "fine"
+    """)
+    result = LocalTestRunner(timeout_s=60).run(ws, tests)
+    assert result.all_passed, result.output

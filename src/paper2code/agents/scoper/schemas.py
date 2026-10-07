@@ -57,7 +57,10 @@ def normalise_signature(signature: str) -> str:
 
 
 def _signature_ok(signature: str, indent: str = "") -> bool:
+    """True only for a single def line: no newlines, exactly one function whose body is the `pass` we add."""
     signature = normalise_signature(signature)
+    if "\n" in signature or "\r" in signature:
+        return False
     source = (
         f"{signature}:\n    pass\n"
         if not indent
@@ -67,8 +70,18 @@ def _signature_ok(signature: str, indent: str = "") -> bool:
         tree = ast.parse(source)
     except SyntaxError:
         return False
-    node = tree.body[0] if not indent else tree.body[0].body[0]
-    return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    if len(tree.body) != 1:
+        return False
+    if indent:
+        cls = tree.body[0]
+        if not isinstance(cls, ast.ClassDef) or len(cls.body) != 1:
+            return False
+        node = cls.body[0]
+    else:
+        node = tree.body[0]
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    return len(node.body) == 1 and isinstance(node.body[0], ast.Pass)
 
 
 def _test_files_ok(files: list[TestFile], group: str, problems: list[str]) -> None:

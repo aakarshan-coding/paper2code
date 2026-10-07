@@ -5,13 +5,14 @@ Build step 4 adds a Modal-backed runner with the same interface.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
@@ -30,6 +31,17 @@ sys.path.insert(0, sys.argv[1])
 sys.exit(pytest.main(sys.argv[2:]))
 """
 _STRIPPED_ENV = ("PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")
+# Model-written test code runs in this subprocess. It must not see the operator's credentials.
+_SECRET_NAME_RE = re.compile(r"(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?)$", re.IGNORECASE)
+_SECRET_PREFIXES = ("OPENAI_", "ANTHROPIC_", "CLAUDE_", "MODAL_", "AWS_", "GITHUB_", "GH_", "HF_", "AZURE_", "GOOGLE_")
+
+
+def _is_secret(name: str) -> bool:
+    return bool(_SECRET_NAME_RE.search(name)) or name.upper().startswith(_SECRET_PREFIXES)
+
+
+def scrubbed_environment() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV and not _is_secret(k)}
 
 
 @dataclass(frozen=True)
@@ -45,6 +57,8 @@ class TestRunResult:
     output: str
     workspace_sha256: str = ""  # tree_digest of the snapshot that was tested
     errored: tuple[str, ...] = ()  # collection/setup errors; a subset of `failed`
+    skipped: tuple[str, ...] = ()  # skipped or xfailed; a subset of `failed`
+    messages: dict[str, str] = field(default_factory=dict)  # test id -> failure/error message
 
     @property
     def all_passed(self) -> bool:
@@ -87,6 +101,21 @@ def parse_junit_errors(path: Path) -> tuple[str, ...]:
     )
 
 
+def parse_junit_details(path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
+    """(skipped ids, {id: message}) where message is the failure/error text pytest recorded."""
+    root = ET.parse(path).getroot()
+    skipped: list[str] = []
+    messages: dict[str, str] = {}
+    for tc in root.iter("testcase"):
+        test_id = f"{tc.get('classname', '')}::{tc.get('name', '')}"
+        for child in tc:
+            if child.tag == "skipped":
+                skipped.append(test_id)
+            elif child.tag in ("failure", "error"):
+                messages[test_id] = (child.get("message") or (child.text or "").strip())[:500]
+    return tuple(skipped), messages
+
+
 class LocalTestRunner:
     """Runs `tests_dir` against a snapshot copy of `workspace` with a hard timeout. No GPU."""
 
@@ -103,7 +132,7 @@ class LocalTestRunner:
             bootstrap = Path(tmp) / "bootstrap.py"
             bootstrap.write_text(_BOOTSTRAP, encoding="utf-8")
             digest = tree_digest(hash_tree(snapshot))
-            env = {k: v for k, v in os.environ.items() if k not in _STRIPPED_ENV}
+            env = scrubbed_environment()
             env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
             cmd = [
                 sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(tests_copy),
@@ -124,6 +153,8 @@ class LocalTestRunner:
             duration = time.monotonic() - start
             passed, failed = parse_junit(report) if report.exists() else ((), ())
             errored = parse_junit_errors(report) if report.exists() else ()
+            skipped, messages = parse_junit_details(report) if report.exists() else ((), {})
             return TestRunResult(
                 passed, failed, proc.returncode, False, duration, 0.0, proc.stdout + proc.stderr, digest, errored,
+                skipped, messages,
             )

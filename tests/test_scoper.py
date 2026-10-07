@@ -60,3 +60,7 @@ def test_factory_fake_model_answers_all_roles(tmp_path):
 
     model = make_chat_model(RunContext(config=Config(runs_root=tmp_path), llm="fake"))
     assert model.parse("scoper", "", "x", ScopeDraft).value is CANARY_DRAFT
+
+
+def test_instructions_require_a_primitive_recomputation_hidden_test():
+    assert "recompute" in SCOPER_INSTRUCTIONS.lower()

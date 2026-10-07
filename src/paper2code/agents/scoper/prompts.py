@@ -29,7 +29,12 @@ the baseline by at least the margin. The claim test MUST be parametrized over se
 
 hidden_tests: flat file names test_*.py, never shown to the builder. Variants of the claim test
 with different seeds, a different data slice, and a perturbed hyperparameter, so a hardcoded answer
-for the public seeds fails. Also list the seeds you used across both groups in `seeds`.
+for the public seeds fails. At least one hidden test must RECOMPUTE the claim metric from the
+interface's primitives (the data generator, the model, both the method's and the baseline's
+loss or scoring functions, the single-condition training function) and cross-check it against
+the numbers the experiment function reports, so an experiment function that returns constants
+is contradicted by the honest parts of the implementation. Also list the seeds you used across
+both groups in `seeds`.
 
 Rules for every test file:
 - Import only from the interface module, pytest, the standard library, and the allowed packages.

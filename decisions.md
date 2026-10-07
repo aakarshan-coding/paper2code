@@ -293,3 +293,21 @@ The spec explains the method in plain language (per-window normalisation, and th
 - Signatures are normalised (trailing colon and whitespace stripped) before validation and rendering, rather than rejected.
 - The stub module starts with `from __future__ import annotations`. The test for it cannot prove the point on Python 3.14, where annotations are already lazy, but the builder sandbox may run an older interpreter.
 - `TestFile`, the schema for a test file's name and contents, is marked non-collectable so pytest stops trying to treat it as a test class.
+
+### What the review found (step 3)
+
+The fresh reviewer probed the stub check with scratch scripts and found it too trusting in several directions. All fixed test-first; the suite went from 188 to 200.
+
+1. **Critical: tests written inside a class crashed the check.** pytest names such tests `file.ClassName::test`, the pruner looked for a file called `file.ClassName.py`, and the crash happened before the attempt was logged, so every resume would have re-drafted the same paper at thirty cents a time. Models write test classes routinely.
+2. **"Fails on stubs" was accepted as "fails because of the stubs".** A claim test of `assert False`, a skipped test, a test that divides by zero in setup: all failed on stubs and were accepted. Now every surviving failure must be a NotImplementedError from a stub, skips are rejected, and each suite must have actually collected and run at least one test without timing out.
+3. **Pruning reported deletions it had not made.** A passing test the AST walker could not find stayed in the file but was logged as removed, then frozen. Now the suites are run a second time after pruning and any surviving pass rejects the scope.
+4. **Model-written tests ran with the operator's API key in their environment.** The runner now scrubs anything that looks like a credential from the child process. The real sandbox arrives in step 4, but step 3 put model-authored code on the production path, so this could not wait.
+5. **A "signature" with a second statement smuggled code into the stub module.** The validator now accepts exactly one def line whose body is the `pass` it adds itself.
+6. **A stale scope directory that could not be deleted would have been frozen into the next paper.** It now stops the run instead.
+7. **A crash during the stub check re-billed the draft.** Validated drafts are now saved to disk before the check and reused on resume.
+
+The reviewer also showed that for the live assignment, an experiment function returning the same three numbers for every input would pass all nine claim tests, public and hidden alike. Varying seeds and settings does not catch a constant answer. The structural defence is the step 5 inspector; in the meantime the scoper prompt asks for a hidden test that recomputes the claim metric from the primitives, so a fake experiment function is contradicted by the honest parts. Re-checked under the stricter rules, the live assignment is still accepted: sixteen stub failures, all NotImplementedError.
+
+### Lesson worth a blog paragraph
+
+Every one of the stub-check gaps had the same shape as the step 1 lesson, one level up: a check that confirmed a symptom ("the test failed") instead of the cause ("the test failed because the thing it tests does not exist yet"). The fix each time was to look at *why* the outcome happened and to re-verify after acting. The second run after pruning is the cheapest insurance in the whole system: a few seconds of pytest to prove a deletion took.

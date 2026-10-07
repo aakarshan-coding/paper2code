@@ -8,7 +8,7 @@ import shutil
 
 import httpx
 
-from paper2code.agents.scoper.schemas import validate_draft
+from paper2code.agents.scoper.schemas import ScopeDraft, validate_draft
 from paper2code.agents.scoper.scoper import ROLE_SCOPER, draft_scope
 from paper2code.arxiv import http as arxiv_http
 from paper2code.arxiv.fulltext import FullTextUnavailable, fetch_fulltext
@@ -27,6 +27,7 @@ from paper2code.manager.stubcheck import run_stub_check
 from paper2code.sandbox.factory import make_runner
 
 ATTEMPTS_FILE = "scope_attempts.jsonl"
+DRAFTS_DIR = "scope_drafts"  # validated drafts persisted before the stub check, so a crash there never re-bills
 OVER_BUDGET = "over_budget"
 MALFORMED = "malformed_scope"
 FULLTEXT_UNAVAILABLE = "fulltext_unavailable"
@@ -70,23 +71,33 @@ def run(record: RunRecord, ctx: RunContext) -> None:
             row = {"arxiv_id": arxiv_id, "title": paper.title, "accepted": False, "reason": None,
                    "removed_tests": [], "claim_tests": 0, "est_usd": None, "cost_usd": 0.0, "model": _model_name(llm)}
             shutil.rmtree(scope_dir, ignore_errors=True)
-            try:
-                fulltext = fetch_fulltext(arxiv_id, http, cfg.max_fulltext_chars)
-            except (FullTextUnavailable, ArxivUnavailable, httpx.HTTPError) as exc:
-                _append_attempt(run_dir, {**row, "reason": f"{FULLTEXT_UNAVAILABLE}: {exc}"})
-                continue
-            before = usage.cost_usd
-            try:
-                draft = draft_scope(paper, card, fulltext.text, llm, cfg, record.budget.limit_usd, usage)
-            except LLMBadOutput as exc:
-                _append_attempt(run_dir, {**row, "reason": f"{MALFORMED}: {exc}", "cost_usd": round(usage.cost_usd - before, 6)})
-                continue
-            row["cost_usd"] = round(usage.cost_usd - before, 6)
+            if scope_dir.exists():
+                # Never stub-check or freeze another paper's leftovers (Windows file locks, for one).
+                raise RuntimeError(f"could not remove previous scope directory {scope_dir}")
+            draft_path = run_dir / DRAFTS_DIR / f"{arxiv_id}.json"
+            if draft_path.exists():
+                draft = ScopeDraft.model_validate_json(draft_path.read_text(encoding="utf-8"))
+                row["draft_reused"] = True
+            else:
+                try:
+                    fulltext = fetch_fulltext(arxiv_id, http, cfg.max_fulltext_chars)
+                except (FullTextUnavailable, ArxivUnavailable, httpx.HTTPError) as exc:
+                    _append_attempt(run_dir, {**row, "reason": f"{FULLTEXT_UNAVAILABLE}: {exc}"})
+                    continue
+                before = usage.cost_usd
+                try:
+                    draft = draft_scope(paper, card, fulltext.text, llm, cfg, record.budget.limit_usd, usage)
+                except LLMBadOutput as exc:
+                    _append_attempt(run_dir, {**row, "reason": f"{MALFORMED}: {exc}", "cost_usd": round(usage.cost_usd - before, 6)})
+                    continue
+                row["cost_usd"] = round(usage.cost_usd - before, 6)
+                problems = validate_draft(draft)
+                if problems:
+                    _append_attempt(run_dir, {**row, "reason": f"{MALFORMED}: {'; '.join(problems)}"})
+                    continue
+                draft_path.parent.mkdir(exist_ok=True)
+                draft_path.write_text(draft.model_dump_json(indent=2), encoding="utf-8")
             row["est_usd"] = draft.est_usd
-            problems = validate_draft(draft)
-            if problems:
-                _append_attempt(run_dir, {**row, "reason": f"{MALFORMED}: {'; '.join(problems)}"})
-                continue
             write_scope(scope_dir, draft)
             check = run_stub_check(scope_dir, draft.interface, runner, cfg.min_seeds)
             row["removed_tests"] = check.removed

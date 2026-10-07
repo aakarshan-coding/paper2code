@@ -252,3 +252,34 @@ def test_run_with_builder_maps_cap_reasons_to_outcomes(tmp_path, canary_dir):
     assert final.outcome is Outcome.INCOMPLETE_BUDGET
     rows = BuildLog(rec.run_dir / "build.log").read()
     assert rows[-1]["event"] == "session_end" and rows[-1]["reason"] == TEST_RUNS_CAP and "elapsed_s" in rows[-1]
+
+
+def test_rate_limit_canary_preserves_workspace_and_log(tmp_path, canary_dir):
+    """Spec 15: a simulated subscription rate-limit error during build."""
+    from paper2code.agents.builder.agent import RateLimited
+
+    rec = _seed_run(tmp_path, canary_dir)
+
+    class HalfwayThenLimited:
+        def build(self, ctx):
+            (ctx.workspace / "canary_method.py").write_text("# partial work\n", encoding="utf-8")
+            ctx.run_tests()
+            raise RateLimited("subscription rate limit reached")
+
+    build_stage.run_with_builder(RunRecord.load(rec.run_dir), _ctx(tmp_path, None), HalfwayThenLimited())
+    final = RunRecord.load(rec.run_dir)
+    assert final.outcome is Outcome.ERROR
+    assert (final.error.stage, final.error.reason) == ("build", "rate_limited")
+    assert (rec.run_dir / "workspace" / "canary_method.py").read_text(encoding="utf-8") == "# partial work\n"
+    rows = BuildLog(rec.run_dir / "build.log").read()
+    assert [r["event"] for r in rows] == ["session_start", "run_tests", "session_end"]
+    assert rows[-1]["reason"] == "rate_limited"
+    assert final.counters.test_runs_used == 1
+
+
+def test_make_builder_agent(tmp_path):
+    from paper2code.agents.builder.agent import AgentBuilder
+    from paper2code.agents.builder.factory import make_builder
+    from paper2code.manager.graph import RunContext
+
+    assert isinstance(make_builder(RunContext(config=Config(), builder="agent")), AgentBuilder)

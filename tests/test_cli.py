@@ -56,11 +56,19 @@ def test_single_stage_then_resume(tmp_path, canary_dir, capsys):
     assert "outcome: completed" in capsys.readouterr().out
 
 
-def test_pipeline_exception_exits_1(tmp_path, canary_dir, capsys):
+def test_pipeline_exception_exits_1(tmp_path, canary_dir, capsys, monkeypatch):
+    """A stage that raises makes the CLI exit 1 and print the error. The builder is stubbed so no
+    agent session can start inside the unit suite."""
+    import paper2code.agents.builder.factory as factory
+
+    def boom(ctx):
+        raise RuntimeError("simulated stage failure")
+
+    monkeypatch.setattr(factory, "make_builder", boom)
     run_dir = _init(tmp_path, canary_dir, capsys)
     rc = main(["run", "--run", str(run_dir), "--no-gpu", "--builder", "agent"])
     assert rc == 1
-    assert "build step 4" in capsys.readouterr().err
+    assert "simulated stage failure" in capsys.readouterr().err
 
 
 # ---- step 2: fetch / score / select through the CLI ----
@@ -161,3 +169,20 @@ def test_scope_by_arxiv_id_creates_scoped_run(tmp_path, monkeypatch, capsys):
     rows = (run_dir / "candidates.jsonl").read_text(encoding="utf-8").splitlines()
     assert '"model": "forced"' in rows[0]
     assert "stage: scope" in capsys.readouterr().out
+
+
+def test_agent_builder_needs_no_reference_flag(tmp_path, canary_dir, capsys, monkeypatch):
+    """Argument handling only: the real agent builder is replaced so no SDK session is started."""
+    import paper2code.agents.builder.factory as factory
+
+    seen = {}
+
+    class NoOpBuilder:
+        def build(self, ctx):
+            seen["built"] = True
+
+    monkeypatch.setattr(factory, "make_builder", lambda ctx: (seen.__setitem__("builder", ctx.builder), NoOpBuilder())[1])
+    run_dir = _init(tmp_path, canary_dir, capsys)
+    rc = main(["build", "--run", str(run_dir), "--no-gpu", "--builder", "agent", "--config", str(tmp_path / "absent.yaml")])
+    assert rc == 0 and seen == {"builder": "agent", "built": True}
+    assert "requires --reference" not in capsys.readouterr().err

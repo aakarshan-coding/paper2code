@@ -92,6 +92,17 @@ def build_options(tools: BuilderTools, config: Config, session: BuildSession, lo
         return {}
 
     model = config.models.get("builder") or None
+    # The allowlist auto-approves our six tools before can_use_tool is consulted; the SDK warns about
+    # that. Every call is still gated by the PreToolUse hook above, so the warning is noise. pytest
+    # resets warning filters per test, hence the local context rather than a module-level filter.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", message="can_use_tool will not be invoked")
+        return _make_options(model, tools, config, can_use_tool, refuse_after_end, on_compact, cwd)
+
+
+def _make_options(model, tools, config, can_use_tool, refuse_after_end, on_compact, cwd):
+    from claude_agent_sdk import ClaudeAgentOptions, HookMatcher
+
     return ClaudeAgentOptions(
         model=model,
         system_prompt=SYSTEM_PROMPT,

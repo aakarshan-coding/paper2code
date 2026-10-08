@@ -68,6 +68,7 @@ class Config:
     sandbox_cpu: float = 2.0
     sandbox_memory_mb: int = 4096
     payload_max_mb: int = 50
+    inspector_max_chars: int = 120_000
 
 
 def load_config(path: Path) -> Config:
@@ -103,4 +104,5 @@ def load_config(path: Path) -> Config:
         sandbox_cpu=float(raw.get("sandbox_cpu", defaults.sandbox_cpu)),
         sandbox_memory_mb=int(raw.get("sandbox_memory_mb", defaults.sandbox_memory_mb)),
         payload_max_mb=int(raw.get("payload_max_mb", defaults.payload_max_mb)),
+        inspector_max_chars=int(raw.get("inspector_max_chars", defaults.inspector_max_chars)),
     )

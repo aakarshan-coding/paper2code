@@ -82,3 +82,7 @@ def test_step4b_config_defaults():
     assert cfg.modal_app_name == "paper2code"
     assert cfg.sandbox_allowed_domains == ["pypi.org", "files.pythonhosted.org", "download.pytorch.org"]
     assert (cfg.sandbox_cpu, cfg.sandbox_memory_mb, cfg.payload_max_mb) == (2.0, 4096, 50)
+
+
+def test_inspector_config_default():
+    assert Config().inspector_max_chars == 120_000

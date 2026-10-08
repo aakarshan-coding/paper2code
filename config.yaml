@@ -38,3 +38,4 @@ sandbox_allowed_domains: [pypi.org, files.pythonhosted.org, download.pytorch.org
 sandbox_cpu: 2.0
 sandbox_memory_mb: 4096
 payload_max_mb: 50             # a run_tests snapshot bigger than this is refused
+inspector_max_chars: 120000    # paper + spec + tests + workspace + build log sent to the inspector, about 30k tokens

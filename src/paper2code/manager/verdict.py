@@ -18,6 +18,7 @@ class Flag:
     file: str
     line: int | None
     note: str
+    source: str = "inspector"  # inspector | build_log | workspace_scan
 
 
 def decide(integrity_mismatches: Sequence[str], hidden: TestRunResult, flags: Sequence[Flag]) -> Outcome:
@@ -59,7 +60,7 @@ class Verdict:
             integrity_mismatches=list(d["integrity_mismatches"]),
             hidden_passed=list(d["hidden_passed"]),
             hidden_failed=list(d["hidden_failed"]),
-            flags=[Flag(**f) for f in d["flags"]],
+            flags=[Flag(**{"source": "inspector", **f}) for f in d["flags"]],  # older files have no `source`
             summary=d["summary"],
             confidence=d["confidence"],
         )

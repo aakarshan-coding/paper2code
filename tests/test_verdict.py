@@ -45,5 +45,20 @@ def test_verdict_write_and_load(tmp_path):
     assert path == tmp_path / "verdict.json"
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["outcome"] == "completed_suspicious"
-    assert data["flags"] == [{"kind": "hardcoded_result", "file": "canary_method.py", "line": 12, "note": "lookup table keyed by seed"}]
+    assert data["flags"] == [{"kind": "hardcoded_result", "file": "canary_method.py", "line": 12, "note": "lookup table keyed by seed", "source": "inspector"}]
     assert Verdict.load(tmp_path) == v
+
+
+def test_flag_source_defaults_and_round_trips(tmp_path):
+    old = Flag("hardcoded_result", "m.py", 3, "lookup table")
+    assert old.source == "inspector"
+    v = Verdict(outcome=Outcome.COMPLETED_SUSPICIOUS, flags=[old, Flag("hidden_test_probing", "build.log", 2, "find hidden", source="build_log")])
+    v.write(tmp_path)
+    back = Verdict.load(tmp_path)
+    assert [f.source for f in back.flags] == ["inspector", "build_log"]
+    # an older verdict.json written without `source` still loads
+    d = json.loads((tmp_path / "verdict.json").read_text(encoding="utf-8"))
+    for f in d["flags"]:
+        f.pop("source")
+    (tmp_path / "verdict.json").write_text(json.dumps(d), encoding="utf-8")
+    assert Verdict.load(tmp_path).flags[0].source == "inspector"

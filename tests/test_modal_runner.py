@@ -69,3 +69,11 @@ def test_modal_app_module_declares_the_function():
     src = Path("src/paper2code/sandbox/modal_app.py").read_text(encoding="utf-8")
     assert 'modal.App("paper2code")' in src and 'name="run_tests_remote"' in src and "execute_tests(payload, timeout_s)" in src
     assert "add_local_python_source" in src and "download.pytorch.org/whl/cpu" in src
+
+
+def test_modal_app_declares_the_scheduled_manager():
+    src = Path("src/paper2code/sandbox/modal_app.py").read_text(encoding="utf-8")
+    assert 'name="daily_run"' in src and "modal.Cron(" in src and "Secret.from_name(" in src
+    assert "pip_install_from_pyproject" in src and 'add_local_file("config.yaml"' in src
+    assert '"OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"' in src and 'os.environ.pop("ANTHROPIC_API_KEY"' in src
+    assert '["daily", "--config", "/root/config.yaml"]' in src

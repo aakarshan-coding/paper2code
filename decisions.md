@@ -498,3 +498,17 @@ Rulings worth knowing: `cd ..` stays flagged, because in local mode the parent o
 ### Lesson worth a blog paragraph
 
 Two of the five findings were about the record lying in opposite directions: one would have called an infrastructure crash what was really tampering, the other would have called honest work suspicious. Both came from code that was correct for the fixture it was written against and wrong for the world. The fix in each case was not cleverness but specificity: decide tampering before reading anything, and match the shape of a probe rather than a word that ordinary code uses all the time. And the resumability bug is a reminder that a test which exercises one layer proves that layer only; the claim in the journal was about the pipeline, so the test had to run the pipeline.
+
+## 2026-10-07: Step 6 plan, the daily run
+
+The last step makes the loop run on its own. One command, `paper2code daily`, does a whole day: it checks that everything needed is in place, creates today's run directory, runs the seven stages, pushes the run directory to a separate "runs" git repository after every stage, rebuilds a static dashboard over every run, and sends an optional notification. A Modal scheduled function runs that command once a day.
+
+**Decisions made while planning.**
+
+- **Preflight before spend.** The daily command refuses to start when a key is missing, the GPU function is not deployed, the `claude` program cannot be found, or the runs repository cannot be reached. A forgotten deploy then costs nothing. This was a reviewer suggestion from step 4b.
+- **Publish after every stage.** The spec asks for it so a partial run is visible remotely. A failed push never fails the run: the commit stays local and the next push sends everything.
+- **The dashboard is a static site inside the runs repository**, under `docs/`, so GitHub Pages can serve it with no extra hosting. It copies the run's files for drill-down, but never the hidden tests, because the site may be public. Every string is escaped; a paper title is untrusted text.
+- **The cloud manager is simple because the Agent SDK's Linux wheel bundles the `claude` program.** Checked by downloading the wheel: it contains a 251 MB `claude` binary. So the Modal image only needs the Python package installed. No Node.
+- **One Modal secret** holds the OpenAI key, the subscription token and the GitHub token. `ANTHROPIC_API_KEY` is removed from the environment before the manager starts, as the spec requires.
+- **Two runs on the same day** get `-2`, `-3` suffixes, as the spec says. The second run usually ends `no_candidates` because the first one already graded the day's papers.
+- **Things only the author can do:** create the runs repository on GitHub, create a push token, create the Modal secret, turn the schedule on, and approve the first real run. The plan stops before those.

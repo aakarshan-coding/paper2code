@@ -132,3 +132,15 @@ def test_until_stops_after_named_stage(tmp_path):
     assert calls == ["fetch", "score", "select"]
     assert final.stage == "select"
     assert final.outcome is None
+
+
+def test_on_stage_done_hook_is_called_after_each_stage_with_the_saved_record(tmp_path, canary_dir):
+    from paper2code.manager.local import init_run
+    from paper2code.manager.record import Paper
+
+    rec = init_run(tmp_path, canary_dir / "scope", Paper("canary-0001", "t", ""), date(2026, 10, 7), Config(runs_root=tmp_path))
+    seen = []
+    ctx = RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), builder="stub", reference_dir=canary_dir / "reference", llm="fake",
+                     on_stage_done=lambda record, stage: seen.append((stage, record.stage, RunRecord.load(record.run_dir).stage)))
+    run_pipeline(rec.run_dir, ctx)
+    assert seen == [("build", "build", "build"), ("inspect", "inspect", "inspect"), ("report", "report", "report")]

@@ -30,6 +30,7 @@ class RunContext:
     http: Any = None  # test injection: a PoliteClient; None builds one from config
     chat_model: Any = None  # test injection: a ChatModel; None builds one from config
     force_eligible: bool = False  # local mode: skip scout pass one, treat every fetched paper as eligible
+    on_stage_done: Callable[[RunRecord, str], None] | None = None  # called after a stage's record is saved (daily publishes here)
 
 
 StageFn = Callable[[RunRecord, RunContext], None]
@@ -72,6 +73,8 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
             record.outcome = Outcome.ERROR
             record.error = RunError(stage=stage, reason="api_error", message=str(exc))
             record.save()
+            if ctx.on_stage_done:
+                ctx.on_stage_done(record, stage)
             return {}
         except Exception as exc:
             # Leave `stage` alone so the stage re-runs on resume, but record what happened.
@@ -82,9 +85,13 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
             # The run ended in an earlier stage's error. Leave `stage` there so that clearing the
             # error and re-running repeats that stage; summary.md is rewritten on every run anyway.
             record.save()
+            if ctx.on_stage_done:
+                ctx.on_stage_done(record, stage)
             return {}
         record.stage = stage
         record.save()
+        if ctx.on_stage_done:
+            ctx.on_stage_done(record, stage)
         return {}
 
     node.__name__ = f"{stage}_node"

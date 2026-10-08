@@ -54,3 +54,14 @@ def test_outcome_for_each_reason():
         assert outcome_for(r) is Outcome.INCOMPLETE_STUCK
     with pytest.raises(KeyError):
         outcome_for("made_up")
+
+
+def test_create_run_suffixes_a_second_run_on_the_same_day(tmp_path):
+    """Spec 4: a manual rerun the same day gets a numeric suffix (behaviour from step 1, pinned here for step 6)."""
+    from paper2code.manager.record import RunRecord
+
+    a = create_run(tmp_path, date(2026, 10, 7), Caps(), 10.0)
+    b = create_run(tmp_path, date(2026, 10, 7), Caps(), 10.0)
+    c = create_run(tmp_path, date(2026, 10, 7), Caps(), 10.0)
+    assert (a.run_id, b.run_id, c.run_id) == ("2026-10-07", "2026-10-07-2", "2026-10-07-3")
+    assert b.run_dir == tmp_path / "2026-10-07-2" and RunRecord.load(b.run_dir).run_id == "2026-10-07-2"

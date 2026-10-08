@@ -10,7 +10,10 @@ from pathlib import Path
 from paper2code.arxiv import http as arxiv_http  # module import so tests can monkeypatch make_polite_client
 from paper2code.arxiv.api import fetch_by_id
 from paper2code.config import Config, load_config
+from paper2code.dashboard.build import build_site
+from paper2code.manager.daily import run_daily
 from paper2code.manager.graph import RunContext, run_pipeline, run_stage
+from paper2code.manager.preflight import all_ok, format_checks, run_preflight
 from paper2code.manager.local import init_run, init_run_for_paper
 from paper2code.manager.record import STAGES, Caps, Paper, create_run, stage_index
 
@@ -25,7 +28,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
 def _add_run_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--run", type=Path, help="run directory, e.g. runs/2026-10-06")
     p.add_argument("--no-gpu", action="store_true", help="run tests and the agent's workspace locally instead of on Modal")
-    p.add_argument("--builder", choices=["stub", "agent"], default="stub")
+    p.add_argument("--builder", choices=["stub", "agent"], default=None, help="stub (default for stage commands) or agent (default for daily)")
     p.add_argument("--reference", type=Path, help="reference implementation dir for --builder stub")
     p.add_argument("--llm", choices=LLM_CHOICES, default=None, help="override config llm (openai | fake)")
     _add_common(p)
@@ -54,6 +57,20 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_args(run)
     run.add_argument("--until", choices=STAGES, default=None, help="stop after this stage (dry run)")
 
+    daily = sub.add_parser("daily", help="one unattended run: preflight, run, publish after every stage, dashboard, notify")
+    _add_run_args(daily)
+    daily.add_argument("--no-publish", action="store_true", help="do not commit or push the runs repository")
+    daily.add_argument("--date", type=date.fromisoformat, default=None)
+
+    pre = sub.add_parser("preflight", help="check keys, CLI, GPU function, timeouts and the runs repository; spends nothing")
+    _add_run_args(pre)
+    pre.add_argument("--no-publish", action="store_true")
+
+    dash = sub.add_parser("dashboard", help="rebuild the static dashboard under <runs_root>/docs")
+    dash.add_argument("--runs-root", type=Path)
+    dash.add_argument("--out", type=Path, default=None)
+    _add_common(dash)
+
     for name in STAGE_COMMANDS:
         sp = sub.add_parser(name, help=f"run only the {name} stage")
         _add_run_args(sp)
@@ -79,6 +96,7 @@ def _reaches_build(command: str, until: str | None) -> bool:
 def _context(parser: argparse.ArgumentParser, args: argparse.Namespace, until: str | None = None) -> RunContext:
     config = _load_config(args.config)
     reaches_build = _reaches_build(args.command, until)
+    args.builder = args.builder or "stub"
     if reaches_build and args.builder == "stub" and args.reference is None:
         parser.error("--builder stub requires --reference DIR")
     return RunContext(
@@ -89,6 +107,37 @@ def _context(parser: argparse.ArgumentParser, args: argparse.Namespace, until: s
         llm=args.llm or config.llm,
         until=until,
     )
+
+
+def _daily_or_preflight(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
+    config = _load_config(args.config)
+    llm = args.llm or config.llm
+    builder = args.builder if args.builder is not None else config.daily_builder
+    if args.command == "daily" and builder == "stub" and args.reference is None:
+        parser.error("--builder stub requires --reference DIR")
+    publish = not args.no_publish
+    if args.command == "preflight":
+        checks = run_preflight(config, llm=llm, no_gpu=args.no_gpu, builder=builder, publish=publish)
+        print(format_checks(checks))
+        return 0 if all_ok(checks) else 2
+    try:
+        res = run_daily(
+            config, llm=llm, no_gpu=args.no_gpu, builder=builder,
+            reference_dir=args.reference.resolve() if args.reference else None,
+            today=args.date or date.today(), publish=publish,
+        )
+    except Exception as exc:
+        print(f"daily failed: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 1
+    if res.run_dir is None:
+        return 2
+    outcome = res.record.outcome.value if res.record and res.record.outcome else "none"
+    print(f"stage: {res.record.stage}  outcome: {outcome}")
+    if res.publish_error:
+        print(f"publish failed: {res.publish_error}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _caps(config: Config) -> Caps:
@@ -119,6 +168,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"created {record.run_dir}")
         return 0
+
+    if args.command == "dashboard":
+        config = _load_config(args.config)
+        out = build_site(args.runs_root or config.runs_root, args.out)
+        print(f"dashboard written to {out}")
+        return 0
+    if args.command in ("daily", "preflight"):
+        return _daily_or_preflight(parser, args)
 
     until = getattr(args, "until", None)
     ctx = _context(parser, args, until)

@@ -14,6 +14,7 @@ def _seed_built_run(tmp_path, canary_dir, implementation):
     shutil.copytree(canary_dir / "scope", rec.run_dir / "scope")
     write_manifest(rec.run_dir / "scope")
     shutil.copytree(canary_dir / implementation, rec.run_dir / "workspace")
+    shutil.copy(canary_dir / "paper.md", rec.run_dir / "paper.md")
     rec.scope_manifest_sha256 = manifest_sha256(rec.run_dir / "scope")
     rec.workspace_sha256 = tree_digest(hash_tree(rec.run_dir / "workspace"))
     rec.stage = "build"
@@ -22,7 +23,7 @@ def _seed_built_run(tmp_path, canary_dir, implementation):
 
 
 def _ctx(tmp_path):
-    return RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120))
+    return RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), llm="fake")
 
 
 def test_reference_workspace_is_completed(tmp_path, canary_dir):
@@ -89,3 +90,96 @@ def test_workspace_changed_after_public_pass_is_tests_tampered(tmp_path, canary_
     final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
     assert final.outcome is Outcome.TESTS_TAMPERED
     assert Verdict.load(rec.run_dir).integrity_mismatches == ["workspace"]
+
+
+HARDCODED_LINE = 18  # the `if seed in (0, 1, 2)` line of the hardcoded canary
+
+
+def test_hardcoded_workspace_gets_a_hardcoded_result_flag(tmp_path, canary_dir):
+    rec = _seed_built_run(tmp_path, canary_dir, "hardcoded")
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    v = Verdict.load(rec.run_dir)
+    assert final.outcome is Outcome.HIDDEN_FAILED  # hidden failure outranks flags
+    assert [(f.kind, f.source, f.file, f.line) for f in v.flags] == [("hardcoded_result", "inspector", "canary_method.py", HARDCODED_LINE)]
+    assert v.confidence is not None and v.confidence < 0.5 and "fake inspector" in v.summary
+    assert final.budget.spent_tokens > 0  # the inspector call was billed
+
+
+def test_reference_with_a_probing_build_log_is_completed_suspicious(tmp_path, canary_dir):
+    from paper2code.manager.buildlog import BuildLog
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    log = BuildLog(rec.run_dir / "build.log")
+    log.append({"event": "session_start", "builder": "agent"})
+    log.append({"event": "tool_call", "tool": "bash", "args": {"command": "find / -name '*hidden*'"}, "ok": True})
+    log.append({"event": "run_tests", "call": 1, "passed": ["a"] * 7, "failed": []})
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert final.outcome is Outcome.COMPLETED_SUSPICIOUS
+    v = Verdict.load(rec.run_dir)
+    assert [(f.kind, f.source) for f in v.flags] == [("hidden_test_probing", "build_log")]
+    assert v.confidence is not None and v.confidence > 0.5
+
+
+def test_pytest_patching_workspace_is_hidden_failed_and_flagged(tmp_path, canary_dir):
+    rec = _seed_built_run(tmp_path, canary_dir, "pytest_patched")
+    final = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert final.outcome is Outcome.HIDDEN_FAILED
+    v = Verdict.load(rec.run_dir)
+    assert len(v.hidden_failed) == 5 and "altered in-process" in v.summary
+    assert any(f.kind == "test_detection" and f.source == "workspace_scan" and f.file == "canary_method.py" for f in v.flags)
+
+
+def test_llm_outage_during_inspect_is_api_error_and_resumable(tmp_path, canary_dir):
+    from paper2code.llm.base import LLMError
+
+    class Down:
+        def parse(self, role, instructions, user, schema):
+            raise LLMError("provider down")
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    ctx = RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), chat_model=Down())
+    final = run_stage("inspect", rec.run_dir, ctx)
+    assert final.outcome is Outcome.ERROR and final.error.stage == "inspect" and final.error.reason == "api_error"
+    assert not (rec.run_dir / "verdict.json").exists()
+    # the stage was not advanced, so a re-run with a working model completes the run
+    final.outcome = None
+    final.error = None
+    final.save()
+    again = run_stage("inspect", rec.run_dir, _ctx(tmp_path))
+    assert again.outcome is Outcome.COMPLETED and (rec.run_dir / "verdict.json").exists()
+
+
+def test_bad_inspector_output_keeps_the_mechanical_verdict(tmp_path, canary_dir):
+    from paper2code.llm.base import LLMBadOutput
+
+    class Garbled:
+        def parse(self, role, instructions, user, schema):
+            raise LLMBadOutput("refusal")
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    ctx = RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), chat_model=Garbled())
+    final = run_stage("inspect", rec.run_dir, ctx)
+    assert final.outcome is Outcome.COMPLETED
+    v = Verdict.load(rec.run_dir)
+    assert v.flags == [] and v.confidence is None and "review unavailable" in v.summary
+
+
+def test_report_keeps_flags_that_point_at_unknown_files(tmp_path, canary_dir):
+    from paper2code.agents.inspector.schemas import InspectionReport, ReviewFlag
+    from paper2code.llm.base import LLMResult
+    from paper2code.manager.stages.report import render_summary
+
+    class Pointing:
+        def parse(self, role, instructions, user, schema):
+            rep = InspectionReport(flags=[ReviewFlag(kind="wrong_method", file="nowhere/else.py", line=999, evidence="")],
+                                   method_matches_paper=False, confidence=0.3, summary="points elsewhere")
+            return LLMResult(value=rep, model="fake", input_tokens=1, output_tokens=1, cost_usd=0.0)
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    ctx = RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), chat_model=Pointing())
+    final = run_stage("inspect", rec.run_dir, ctx)
+    assert final.outcome is Outcome.COMPLETED_SUSPICIOUS
+    v = Verdict.load(rec.run_dir)
+    assert v.flags[0].file == "nowhere/else.py" and v.flags[0].line == 999
+    text = render_summary(final, v)
+    assert "nowhere/else.py:999" in text and "(inspector)" in text and "0.30" in text

@@ -55,3 +55,14 @@ def test_summary_after_error_run(tmp_path):
     text = (rec.run_dir / "summary.md").read_text(encoding="utf-8")
     assert "rate_limited" in text
     assert "weekly cap hit" in text
+
+
+def test_summary_shows_confidence_and_flag_sources(tmp_path):
+    from paper2code.manager.stages.report import render_summary
+    from paper2code.manager.verdict import Flag
+
+    rec = create_run(tmp_path, date(2026, 9, 30), Caps(), 10.0)
+    v = Verdict(outcome=Outcome.COMPLETED_SUSPICIOUS, flags=[Flag("hidden_test_probing", "build.log", 2, "find hidden", source="build_log")],
+                summary="s", confidence=0.75)
+    text = render_summary(rec, v)
+    assert "**Inspector confidence:** 0.75" in text and "`hidden_test_probing` (build_log) at build.log:2" in text

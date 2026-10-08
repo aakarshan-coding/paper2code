@@ -16,7 +16,7 @@ def _init(tmp_path, canary_dir):
 
 
 def _run(run_dir, reference):
-    return main(["run", "--run", str(run_dir), "--no-gpu", "--builder", "stub", "--reference", str(reference)])
+    return main(["run", "--run", str(run_dir), "--no-gpu", "--builder", "stub", "--reference", str(reference), "--llm", "fake"])
 
 
 def test_canary_reaches_completed(tmp_path, canary_dir):

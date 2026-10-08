@@ -187,3 +187,17 @@ def test_without_no_gpu_the_context_selects_modal(tmp_path, canary_dir, capsys, 
     run_dir = _init(tmp_path, canary_dir, capsys)
     rc = main(["build", "--run", str(run_dir), "--builder", "stub", "--reference", str(canary_dir / "reference"), "--config", str(tmp_path / "absent.yaml")])
     assert rc == 0 and seen["runner"] == "ModalTestRunner"
+
+
+def test_init_run_with_paper_writes_paper_md(tmp_path, canary_dir, capsys):
+    rc = main(["init-run", "--scope", str(canary_dir / "scope"), "--paper-id", "canary-0001", "--title", "EMA denoising canary",
+               "--paper", str(canary_dir / "paper.md"), "--runs-root", str(tmp_path), "--date", "2026-10-07"])
+    assert rc == 0 and (tmp_path / "2026-10-07" / "paper.md").read_text(encoding="utf-8").startswith("# Exponential Smoothing")
+
+
+def test_scope_stage_persists_the_paper_text(tmp_path, monkeypatch, capsys):
+    _patch_http(monkeypatch)
+    main(["new-run", "--runs-root", str(tmp_path), "--date", "2026-10-07"])
+    run_dir = tmp_path / "2026-10-07"
+    assert main(["run", "--run", str(run_dir), "--until", "scope", "--llm", "fake"]) == 0
+    assert (run_dir / "paper.md").exists() and len((run_dir / "paper.md").read_text(encoding="utf-8")) > 100

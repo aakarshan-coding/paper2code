@@ -82,6 +82,7 @@ def run(record: RunRecord, ctx: RunContext) -> None:
             else:
                 try:
                     fulltext = fetch_fulltext(arxiv_id, http, cfg.max_fulltext_chars)
+                    (run_dir / "paper.md").write_text(fulltext.text, encoding="utf-8")  # the inspector reads it later
                 except (FullTextUnavailable, ArxivUnavailable, httpx.HTTPError) as exc:
                     _append_attempt(run_dir, {**row, "reason": f"{FULLTEXT_UNAVAILABLE}: {exc}"})
                     continue

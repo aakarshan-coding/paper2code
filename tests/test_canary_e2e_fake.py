@@ -38,7 +38,7 @@ def test_fake_pipeline_reaches_completed(tmp_path, canary_dir, monkeypatch):
     assert rec.outcome is Outcome.COMPLETED and rec.stage == "report"
     assert Verdict.load(run_dir).hidden_failed == []
     assert sorted(p.name for p in run_dir.iterdir()) == [
-        "build.log", "candidates.jsonl", "papers.jsonl", "run.json", "scope", "scope_attempts.jsonl",
+        "build.log", "candidates.jsonl", "paper.md", "papers.jsonl", "run.json", "scope", "scope_attempts.jsonl",
         "scope_drafts", "selected.json", "summary.md", "verdict.json", "workspace",
     ]
 

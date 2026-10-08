@@ -28,12 +28,14 @@ def render_summary(record: RunRecord, verdict: Verdict | None) -> str:
         lines.append("no verdict (run ended before inspection)")
     else:
         lines.append(verdict.summary)
+        if verdict.confidence is not None:
+            lines.append(f"- **Inspector confidence:** {verdict.confidence:.2f}")
         if verdict.flags:
             lines.append("")
             lines.append("Flags:")
             for f in verdict.flags:
                 where = f"{f.file}:{f.line}" if f.line is not None else f.file
-                lines.append(f"- `{f.kind}` at {where}: {f.note}")
+                lines.append(f"- `{f.kind}` ({f.source}) at {where}: {f.note}")
     if record.error is not None:
         lines += [
             "",

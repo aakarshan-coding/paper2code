@@ -45,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--paper-id", required=True)
     init.add_argument("--title", required=True)
     init.add_argument("--url", default="")
+    init.add_argument("--paper", type=Path, default=None, help="paper text (markdown) stored as paper.md for the inspector")
     init.add_argument("--runs-root", type=Path)
     init.add_argument("--date", type=date.fromisoformat, default=None)
     _add_common(init)
@@ -114,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
             paper=Paper(arxiv_id=args.paper_id, title=args.title, url=args.url),
             today=args.date or date.today(),
             config=config,
+            paper_text=args.paper.read_text(encoding="utf-8") if args.paper else None,
         )
         print(f"created {record.run_dir}")
         return 0

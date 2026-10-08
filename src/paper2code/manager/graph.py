@@ -8,6 +8,8 @@ from typing import Any, Callable, Mapping, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from paper2code.config import Config
+from paper2code.llm.base import LLMError
+from paper2code.manager.outcomes import Outcome
 from paper2code.manager.record import STAGES, RunError, RunRecord, stage_index
 
 
@@ -64,6 +66,13 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
             record.error = None  # a previous attempt crashed; this attempt starts clean
         try:
             fn(record, ctx)
+        except LLMError as exc:
+            # The model provider failed: an infrastructure outcome. The stage is left undone so that
+            # clearing the error and re-running repeats it from scratch.
+            record.outcome = Outcome.ERROR
+            record.error = RunError(stage=stage, reason="api_error", message=str(exc))
+            record.save()
+            return {}
         except Exception as exc:
             # Leave `stage` alone so the stage re-runs on resume, but record what happened.
             record.error = RunError(stage=stage, reason="exception", message=f"{type(exc).__name__}: {exc}")

@@ -11,7 +11,7 @@ from paper2code.manager.freeze import freeze_scope
 from paper2code.manager.record import Caps, Paper, RunRecord, create_run
 
 
-def init_run(runs_root: Path, scope_src: Path, paper: Paper, today: date, config: Config) -> RunRecord:
+def init_run(runs_root: Path, scope_src: Path, paper: Paper, today: date, config: Config, paper_text: str | None = None) -> RunRecord:
     """Create a run already at the scope stage from a pre-written scope directory, frozen."""
     caps = Caps(
         test_runs=config.caps.test_runs,
@@ -24,6 +24,8 @@ def init_run(runs_root: Path, scope_src: Path, paper: Paper, today: date, config
     )
     freeze_scope(record)
     record.paper = paper
+    if paper_text is not None:
+        (record.run_dir / "paper.md").write_text(paper_text, encoding="utf-8")  # for the inspector
     record.stage = "scope"
     record.save()
     return record

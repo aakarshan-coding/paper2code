@@ -7,11 +7,13 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 4b of 6: the builder runs in a Modal sandbox (CPU only, no secrets, outbound network
-limited to the package index and hosts named in the spec) and every test run executes in a Modal
-GPU function that receives a snapshot of the workspace plus the tests; the hidden tests are never
-present where the agent runs. `--no-gpu` keeps everything local. The stub builder remains for
-offline tests. Step 5 is the inspector.
+Build step 5 of 6: the inspector reviews the builder's code against the paper (one structured
+call on the inspector model, flags limited to the spec's fixed checklist), two mechanical reviews
+flag hidden-test probing, shrinking test counts and test-harness detection, and the test runner
+itself catches in-process report tampering through a witness hook. The adversarial canaries from
+the spec live in `tests/test_adversarial_canaries.py`. The builder runs in a Modal sandbox and
+tests run in a Modal GPU function (`--no-gpu` keeps everything local). Step 6 is the schedule and
+dashboard.
 
 ## Setup
 
@@ -39,8 +41,10 @@ paper2code scope  --arxiv-id 2610.07324                     # fresh run: score (
 paper2code run --run runs/<date> --until scope --llm fake   # whole front half with the canned canary
 
 # From a hand-written scope to completion (step 1 path)
-paper2code init-run --scope tests/fixtures/canary/scope --paper-id canary-0001 --title "EMA denoising canary"
-paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference
+paper2code init-run --scope tests/fixtures/canary/scope --paper-id canary-0001 --title "EMA denoising canary" --paper tests/fixtures/canary/paper.md
+paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference --llm fake   # fake inspector
+paper2code run --run runs/<date> --no-gpu --builder stub --reference tests/fixtures/canary/reference              # real inspector (OpenAI)
+PAPER2CODE_LIVE_INSPECT=1 pytest tests/test_live_inspector.py -q -s   # opt-in: the real inspector on the canaries
 paper2code run --run runs/<date> --no-gpu --builder agent        # real agent, local workspace (no sandbox)
 PAPER2CODE_LIVE_BUILD=1 pytest tests/test_live_agent.py -q -s     # opt-in live build of the canary
 ```
@@ -78,13 +82,15 @@ at all.
 
 ## Known limitations at this build step
 
-- The test runner imports pytest before the workspace is on `sys.path` and runs
-  the interpreter in isolated mode, so a workspace `pytest.py` or
-  `sitecustomize.py` cannot replace the runner. A workspace module can still
-  register a pytest plugin at import time that rewrites test reports in
-  process. Closing that needs the stub check (step 3, records the expected
-  test-id set at freeze) and the inspector's code review (step 5). Until then
-  in-process execution is the trust boundary.
+- Workspace code runs in the same interpreter as pytest. The runner imports
+  pytest before the workspace is on `sys.path`, runs in isolated mode, and
+  registers a witness hook that records what each test actually did, so a
+  workspace that patches pytest's reporting is marked failed by the runner and
+  flagged by the inspector's workspace scan (`test_detection`). Deeper patches
+  of pytest's runner internals remain an inspector concern.
+- The inspector's code review is one model call over text; it executes
+  nothing. Its flags are limited by schema to the spec's five kinds, but its
+  judgment is a model's judgment: a flag is a reason to look, not a proof.
 - In local mode nothing stops a builder from writing into `scope/`, but the
   manifest hash and the passing-workspace hash are anchored in `run.json`,
   which the builder never receives, so edits, re-freezes and post-pass

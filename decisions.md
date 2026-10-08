@@ -449,3 +449,36 @@ Steps 1 to 4 built a loop that can scope a paper, have an agent implement it in 
 **Canaries.** The spec lists five adversarial canaries; they now live in one test module together with two new ones for the defenses above, each with a docstring naming what it guards. If a prompt change makes one stop firing, the suite goes red.
 
 **Decisions made while planning.** The inspector gets no sandbox of its own because it executes nothing (a recorded deviation from the spec's section 10.1). A model outage during inspection ends the run as an infrastructure error and the stage re-runs cleanly; an unusable answer leaves the mechanical verdict in place with a note. The paper's text is now saved into the run directory by the scope stage so the inspector can read it; a hand-seeded run can pass it with `init-run --paper`. The unit suite never calls a model: every end-to-end test runs with the fake inspector, which flags the hardcoded canary by a simple pattern and is honest about being a heuristic.
+
+## 2026-10-07: Step 5 built, the inspector
+
+Six tasks, test-first. The suite went from 278 to 314 tests. The loop can now say not only "the tests passed" but "and here is whether the code is the paper's method, and what looked wrong".
+
+### What the live run showed
+
+The real inspector model (gpt-5.5) reviewed the two canary workspaces. For the honest reference implementation it returned no flags, said the code implements the EMA recurrence and the experiment as the paper describes, and put its confidence at 0.99. For the hardcoded cheat it returned two flags: `hardcoded_result` on the exact line that branches on the public seeds, and `wrong_method` on the line that returns fabricated numbers, with a summary explaining that the scaled experiment is missing entirely. Both reviews together cost under four cents and took ten seconds. That is a cheap judgment to add to every run.
+
+### How the inspector is built
+
+One structured call over a bundle the manager assembles: the paper, the spec, the interface, the public and hidden tests, every text file in the workspace with numbered lines, and a compacted build log, all capped so a large workspace cannot blow the prompt. The answer's schema limits flag kinds to the spec's five, so the model cannot invent a category, and each flag carries a file, a line and quoted evidence. The verdict rule did not change: any flag turns a passing run into `completed_suspicious`; a hidden failure or a tampered scope still outranks everything. The paper's text is now saved into the run directory by the scope stage, and a hand-seeded run can pass it with `init-run --paper`.
+
+### What needs no model
+
+Two mechanical reviews run before the inspector. The build log is scanned for a builder that went looking for the hidden tests or the run record, and for test counts that shrank between runs. The workspace is scanned for code that imports pytest internals or probes the test environment. They are deterministic, cost nothing, and have their own canaries.
+
+### The runner's witness hook
+
+The step 4b reviewer had shown that a workspace module can patch pytest's reporting at import time and make every test report "passed". The runner now registers a small witness hook before the workspace is importable. It records, for every test, whether the test actually raised. After the run, the runner compares that with pytest's own report; a test that raised but was reported passing is marked failed with a message saying so. The fixture that demonstrated the cheat is now a canary: through the whole pipeline it ends `incomplete_stuck` because the public run never passes, and the workspace scan flags the pytest import on top. The deployed GPU function was redeployed with the new bootstrap and catches it too.
+
+### Decisions recorded during execution
+
+- A model outage during inspection is handled by the pipeline node, not the stage: the run ends as `error` with reason `api_error`, no verdict is written, and the stage is left undone so that clearing the error and re-running repeats the inspection. The stage's own handling would have marked it done and made the error permanent. The scope stage keeps its step 2 behaviour.
+- An unusable answer from the model (a refusal, a schema failure) leaves the mechanical verdict in place with a note that the review was unavailable; the hidden tests and the integrity checks still decide.
+- A flag that points at a file not in the workspace is kept as given. The inspector may legitimately point at the build log, and a reader of the summary should see where it pointed.
+- The unit suite never calls a model: every end-to-end test now passes `--llm fake`, and the fake inspector flags the hardcoded canary by a simple pattern while saying in its summary that it is a heuristic.
+- The pytest-patching canary through the CLI ends `incomplete_stuck` rather than `hidden_failed` as the plan said, because the runner already fails the public run. The defense fires earlier than planned, which is better.
+- Adding `init-run --paper` revealed that argparse had been accepting `--paper` as an abbreviation of `--paper-id`. The exact option now wins; worth remembering when adding options.
+
+### Lesson worth a blog paragraph
+
+The cheapest defenses are the ones that do not need a model. The witness hook is a dozen lines and makes an entire class of cheat (rewrite the report) structurally impossible rather than merely detectable. The build-log and workspace scans are regular expressions and an AST walk. The model review is the expensive, judgment-bearing layer on top, and its job is the cases no pattern can name: a baseline quietly weakened, a method that is almost but not quite the paper's. Put the structural defenses first, let the model handle the remainder, and give each layer a canary so a regression in any of them is a red test rather than a quiet loss.

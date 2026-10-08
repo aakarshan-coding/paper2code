@@ -32,14 +32,18 @@ src/paper2code/
   arxiv/               RSS daily feed, single-paper API lookup, HTML/PDF full text, polite client
   llm/                 ChatModel interface, OpenAI structured-output client, fake, cost accounting
   agents/scout, scoper prompts + pydantic schemas; agents/fake.py answers every role offline
-  agents/builder       Builder protocol, stub builder (step 4 adds the Agent SDK builder)
+  agents/inspector     code review against the paper: capped input bundle, fixed-kind flags, heuristic fake
+  agents/builder       Builder protocol, stub builder, Agent SDK builder with six confined tools
+  manager/review.py    mechanical reviews: build-log probing/shrinking counts, workspace test-detection scan
   policies/            selection policies, plain functions over scorecard rows
-  sandbox/runner.py    LocalTestRunner: pytest in an isolated subprocess over a snapshot
+  sandbox/runner.py    LocalTestRunner: pytest in an isolated subprocess with a witness hook (cross-check)
+  sandbox/modal_*.py   Modal sandbox workspace, GPU test function, session lifetime, remote runner
 tests/                 pytest; tests/fixtures/canary is the EMA denoising canary assignment
 ```
 
 Build order (spec section 16): 1 skeleton, 2 scout, 3 scoper, 4 builder (Agent SDK, Modal
-sandbox and GPU test runner) are done; 5 inspector, 6 schedule and dashboard remain.
+sandbox and GPU test runner), 5 inspector (code review, mechanical reviews, canaries) are done;
+6 schedule, dashboard and the runs repository remain.
 
 ## How work is done here
 
@@ -71,9 +75,10 @@ script with the Write tool and run that.
 
 ## Money and secrets
 
-- Scout and scoper calls go to OpenAI and cost real money (about 1 USD for a day's scoring, about
-  0.35 USD per scoping attempt). `--llm fake` exercises the whole pipeline with no model.
-  Prefer it unless the live result is the point.
+- Scout, scoper and inspector calls go to OpenAI and cost real money (about 1 USD for a day's
+  scoring, about 0.35 USD per scoping attempt, about 0.02 to 0.3 USD per inspection depending on
+  workspace size). `--llm fake` exercises the whole pipeline with no model, including a heuristic
+  fake inspector. Prefer it unless the live result is the point; the unit suite never calls a model.
 - `OPENAI_API_KEY` lives in the Windows user environment, never in the repo or in chat.
 - The builder (step 4) runs on the Claude Max subscription via `CLAUDE_CODE_OAUTH_TOKEN` from
   `claude setup-token`. `ANTHROPIC_API_KEY` must never be set in the builder's environment; it

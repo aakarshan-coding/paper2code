@@ -39,8 +39,8 @@ def _default_modal_lookup(app_name: str, function_name: str):
 def _default_git_probe(url: str) -> bool:
     from paper2code.manager.runs_repo import RunsRepo
 
-    authed = RunsRepo(Path("."), remote_url=url)._authed_url()
-    proc = subprocess.run(["git", "ls-remote", authed, "HEAD"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    auth = RunsRepo(Path("."), remote_url=url)._auth_args()
+    proc = subprocess.run(["git", *auth, "ls-remote", url, "HEAD"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return proc.returncode == 0
 
 

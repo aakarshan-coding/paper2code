@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_args(run)
     run.add_argument("--until", choices=STAGES, default=None, help="stop after this stage (dry run)")
 
-    daily = sub.add_parser("daily", help="one unattended run: preflight, run, publish after every stage, dashboard, notify")
+    daily = sub.add_parser("daily", help="one unattended run: preflight, run, publish after every stage, dashboard, notify; --run DIR resumes a run")
     _add_run_args(daily)
     daily.add_argument("--no-publish", action="store_true", help="do not commit or push the runs repository")
     daily.add_argument("--date", type=date.fromisoformat, default=None)
@@ -124,7 +124,7 @@ def _daily_or_preflight(parser: argparse.ArgumentParser, args: argparse.Namespac
         res = run_daily(
             config, llm=llm, no_gpu=args.no_gpu, builder=builder,
             reference_dir=args.reference.resolve() if args.reference else None,
-            today=args.date or date.today(), publish=publish,
+            today=args.date or date.today(), publish=publish, run_dir=args.run,
         )
     except Exception as exc:
         print(f"daily failed: {exc}", file=sys.stderr)

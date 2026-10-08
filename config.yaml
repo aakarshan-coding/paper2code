@@ -43,5 +43,5 @@ inspector_max_chars: 120000    # paper + spec + tests + workspace + build log se
 runs_repo_url: ""              # e.g. https://github.com/<you>/paper2code-runs ; empty = local directory, no push
 notify_url: ""                 # POST a JSON summary here when a daily run finishes; empty = off
 daily_builder: agent           # what `paper2code daily` uses
-schedule_cron: "0 13 * * *"    # UTC; Modal cron for daily_run (deploy after changing)
-test_function_timeout_s: 1800  # must match PAPER2CODE_TEST_FUNCTION_TIMEOUT at deploy; must exceed run_tests_timeout_s
+schedule_cron: "0 13 * * *"    # UTC; read at deploy time for daily_run (redeploy after changing; PAPER2CODE_SCHEDULE overrides)
+test_function_timeout_s: 1800  # read at deploy time for run_tests_remote; must exceed run_tests_timeout_s (preflight checks)

@@ -69,8 +69,14 @@ def test_daily_refuses_when_preflight_fails(tmp_path, canary_dir, monkeypatch):
 
 def test_daily_finishes_the_run_when_publish_fails(tmp_path, canary_dir, monkeypatch):
     _patch_http(monkeypatch)
-    # The remote was reachable at preflight (stubbed here) and is gone when the pushes happen.
-    res = _daily(_cfg(tmp_path, runs_repo_url=str(tmp_path / "missing.git")), canary_dir, preflight=lambda *a, **k: [])
+    from paper2code.manager.runs_repo import GitError, RunsRepo
+
+    class RemoteGone(RunsRepo):  # reachable at setup, every push fails afterwards
+        def push(self):
+            raise GitError("git push failed: remote gone")
+
+    bare = _bare(tmp_path)
+    res = _daily(_cfg(tmp_path, runs_repo_url=str(bare)), canary_dir, runs_repo_factory=RemoteGone)
     assert res.record.outcome is Outcome.COMPLETED and res.run_dir.exists()
     assert not res.published and "failed" in res.publish_error
     # every stage was still committed locally
@@ -112,3 +118,51 @@ def test_cli_daily_preflight_and_dashboard(tmp_path, canary_dir, monkeypatch, ca
                "--no-publish", "--date", "2026-10-07"])
     assert rc == 0 and "outcome: completed" in capsys.readouterr().out
     assert main(["dashboard", "--config", str(cfg)]) == 0 and (tmp_path / "runs" / "docs" / "index.html").exists()
+
+
+def test_daily_resumes_an_existing_run_and_publishes_it(tmp_path, canary_dir, monkeypatch):
+    """Review fix: `daily --run DIR` was accepted and ignored; a resumed run never reached the remote."""
+    from paper2code.manager.local import init_run
+    from paper2code.manager.record import Paper
+
+    _patch_http(monkeypatch)
+    bare = _bare(tmp_path)
+    cfg = _cfg(tmp_path, runs_repo_url=str(bare))
+    rec = init_run(cfg.runs_root, canary_dir / "scope", Paper("canary-0001", "t", ""), date(2026, 10, 7), cfg)
+    res = _daily(cfg, canary_dir, run_dir=rec.run_dir)
+    assert res.run_dir == rec.run_dir and res.record.outcome is Outcome.COMPLETED and res.published
+    log = _git("log", "--format=%s", "main", cwd=bare).splitlines()
+    assert "run 2026-10-07: build" in log and "run 2026-10-07: report" in log and log[0] == "run 2026-10-07: dashboard"
+    assert not (cfg.runs_root / "2026-10-07-2").exists()
+
+
+def test_daily_final_publish_stages_the_whole_runs_root(tmp_path, canary_dir, monkeypatch):
+    _patch_http(monkeypatch)
+    bare = _bare(tmp_path)
+    cfg = _cfg(tmp_path, runs_repo_url=str(bare))
+    cfg.runs_root.mkdir(parents=True)
+    (cfg.runs_root / "2026-10-01").mkdir()
+    (cfg.runs_root / "2026-10-01" / "run.json").write_text("{\"hand\": \"edited\"}", encoding="utf-8")
+    _daily(cfg, canary_dir)
+    files = _git("ls-tree", "-r", "--name-only", "main", cwd=bare)
+    assert "2026-10-01/run.json" in files
+
+
+def test_daily_notifies_on_preflight_failure_and_on_crash(tmp_path, canary_dir, monkeypatch):
+    _patch_http(monkeypatch)
+    seen = []
+    cfg = _cfg(tmp_path, notify_url="https://hooks.invalid/x")
+    run_daily(cfg, llm="openai", no_gpu=True, builder="stub", reference_dir=canary_dir / "reference", today=date(2026, 10, 7),
+              publish=False, env={}, notifier=lambda url, payload: seen.append(payload) or True)
+    assert seen[-1]["status"] == "preflight_failed" and seen[-1]["run_id"] is None
+
+    def boom(run_dir, ctx):
+        raise RuntimeError("stage exploded")
+
+    try:
+        _daily(cfg, canary_dir, publish=False, pipeline=boom, notifier=lambda url, payload: seen.append(payload) or True)
+    except RuntimeError:
+        pass
+    assert seen[-1]["status"] == "crashed" and "stage exploded" in seen[-1]["message"] and seen[-1]["run_id"] == "2026-10-07"
+    ok = _daily(cfg, canary_dir, publish=False, notifier=lambda url, payload: seen.append(payload) or True)
+    assert seen[-1]["status"] == "finished" and seen[-1]["outcome"] == "completed" and ok.notified

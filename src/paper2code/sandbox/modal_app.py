@@ -8,13 +8,18 @@ different GPU means a redeploy, not a code change.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import modal
 
+from paper2code.config import Config, load_config
 from paper2code.sandbox.remote_tests import execute_tests
 
-GPU = os.environ.get("PAPER2CODE_GPU", "T4")
-FUNCTION_TIMEOUT_S = int(os.environ.get("PAPER2CODE_TEST_FUNCTION_TIMEOUT", "1800"))
+# Deploy-time settings come from config.yaml in the current directory (deploy from the repo root);
+# environment variables override them.
+_CONFIG = load_config(Path("config.yaml")) if Path("config.yaml").exists() else Config()
+GPU = os.environ.get("PAPER2CODE_GPU", _CONFIG.gpu_type)
+FUNCTION_TIMEOUT_S = int(os.environ.get("PAPER2CODE_TEST_FUNCTION_TIMEOUT", str(_CONFIG.test_function_timeout_s)))
 
 app = modal.App("paper2code")
 
@@ -43,7 +48,7 @@ def run_tests_remote(payload: bytes, timeout_s: int) -> dict:
 #   python -m modal secret create paper2code OPENAI_API_KEY=$OPENAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN=$GITHUB_TOKEN
 # ANTHROPIC_API_KEY is deliberately absent. Set runs_repo_url in config.yaml before deploying if the
 # cloud run should push the runs repository; the schedule and timeout are deploy-time environment variables.
-SCHEDULE = os.environ.get("PAPER2CODE_SCHEDULE", "0 13 * * *")
+SCHEDULE = os.environ.get("PAPER2CODE_SCHEDULE", _CONFIG.schedule_cron)
 MANAGER_TIMEOUT_S = int(os.environ.get("PAPER2CODE_MANAGER_TIMEOUT", str(6 * 3600)))
 SECRET_NAME = os.environ.get("PAPER2CODE_SECRET", "paper2code")
 
@@ -66,4 +71,7 @@ def daily_run() -> int:
     os.environ.pop("ANTHROPIC_API_KEY", None)  # the subscription token must be the only Anthropic credential
     os.environ.setdefault("PYTHONUTF8", "1")
     os.chdir("/root")
-    return main(["daily", "--config", "/root/config.yaml"])
+    rc = main(["daily", "--config", "/root/config.yaml"])
+    if rc != 0:
+        raise RuntimeError(f"daily exited {rc} (2 = preflight refused, 1 = the run or the publish failed)")  # a failed call, visible in Modal
+    return rc

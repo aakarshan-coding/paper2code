@@ -77,3 +77,9 @@ def test_modal_app_declares_the_scheduled_manager():
     assert "pip_install_from_pyproject" in src and 'add_local_file("config.yaml"' in src
     assert '"OPENAI_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"' in src and 'os.environ.pop("ANTHROPIC_API_KEY"' in src
     assert '["daily", "--config", "/root/config.yaml"]' in src
+
+
+def test_scheduled_manager_reads_the_cron_from_config_and_fails_the_call_on_a_bad_exit():
+    src = Path("src/paper2code/sandbox/modal_app.py").read_text(encoding="utf-8")
+    assert "load_config(" in src and "schedule_cron" in src and "test_function_timeout_s" in src
+    assert 'raise RuntimeError(f"daily exited' in src

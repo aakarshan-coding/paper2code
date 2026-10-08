@@ -7,7 +7,8 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-All six build steps are done. `paper2code daily` runs one unattended day: a preflight check that
+All six build steps are coded; the first real unattended run and the cloud schedule are pending
+the author's setup (runs repository, token, Modal secret). `paper2code daily` runs one unattended day: a preflight check that
 spends nothing, then the seven stages, pushing the run directory to the runs repository after every
 stage, then the static dashboard under `<runs_root>/docs`, then an optional notification. A Modal
 scheduled function (`daily_run`) runs the same command once a day. The builder works in a Modal
@@ -55,6 +56,7 @@ PAPER2CODE_LIVE_BUILD=1 pytest tests/test_live_agent.py -q -s     # opt-in live 
 paper2code preflight                       # keys, claude CLI, GPU function, timeouts, runs repository; exit 2 on a problem
 paper2code daily --no-publish              # one real day on this machine, no runs repository
 paper2code daily                           # same, and push the run directory after every stage (needs runs_repo_url and GITHUB_TOKEN)
+paper2code daily --run runs/2026-10-07     # resume a crashed or partial run, publishing included
 paper2code dashboard                       # rebuild <runs_root>/docs by hand
 paper2code daily --llm fake --no-gpu --builder stub --reference tests/fixtures/canary/reference --no-publish   # offline rehearsal
 ```
@@ -69,7 +71,7 @@ The scheduled cloud run needs one Modal secret and a deploy:
 
 ```bash
 python -m modal secret create paper2code OPENAI_API_KEY=$OPENAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN=$GITHUB_TOKEN
-PYTHONUTF8=1 PAPER2CODE_SCHEDULE="0 13 * * *" python -m modal deploy src/paper2code/sandbox/modal_app.py
+PYTHONUTF8=1 python -m modal deploy src/paper2code/sandbox/modal_app.py      # from the repo root: config.yaml is read at deploy time
 python -m modal app stop paper2code        # turns the schedule (and the GPU function) off
 ```
 

@@ -55,17 +55,19 @@ def run(record: RunRecord, ctx: RunContext) -> None:
     summary_path = record.run_dir / "summary.md"
     summary_path.write_text(render_summary(record, verdict), encoding="utf-8")
     # The story is prose for readers; it never changes the outcome, so any failure is a note, not an error.
-    usage = Usage()
+    # It is written once: a re-run of the report stage (a resumed run) must not re-bill or rewrite it.
     note = ""
-    try:
-        write_story(record.run_dir, make_chat_model(ctx), usage, ctx.config.inspector_max_chars)
-    except LLMError as exc:
-        note = f"story not written: {exc}"
-    except Exception as exc:
-        note = f"story not written: {type(exc).__name__}: {exc}"
-    finally:
-        record.budget.spent_usd += usage.cost_usd
-        record.budget.spent_tokens += usage.input_tokens + usage.output_tokens
+    if (record.run_dir / STORY_FILE).exists():
+        note = "story already present (use `paper2code story --run DIR` to rewrite it)"
+    elif not (record.run_dir / "scope" / "spec.md").exists():
+        note = "story not written: no scope (the run ended before an assignment was accepted)"
+    else:
+        try:
+            write_story(record.run_dir, make_chat_model(ctx), Usage(), ctx.config.inspector_max_chars, record=record)
+        except LLMError as exc:
+            note = f"story not written: {exc}"
+        except Exception as exc:
+            note = f"story not written: {type(exc).__name__}: {exc}"
     if note:
         summary_path.write_text(summary_path.read_text(encoding="utf-8") + f"\n{note}\n", encoding="utf-8")
     else:

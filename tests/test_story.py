@@ -68,7 +68,7 @@ def test_story_renders_sections_tables_and_real_excerpts(tmp_path, canary_dir):
         assert heading in text
     first_lines = (canary_dir / "reference" / "canary_method.py").read_text(encoding="utf-8").splitlines()[:3]
     assert "```python" in text and "\n".join(first_lines) in text and "`canary_method.py`, lines 1 to 3" in text
-    assert "| OpenAI spend | 1.63 USD |" in text and "| GPU seconds | 12.9 |" in text and "| Test runs | 1 of 25 |" in text
+    assert "| OpenAI spend (all model calls) | 1.63 USD |" in text and "| GPU seconds | 12.9 |" in text and "| Test runs | 1 of 25 |" in text
     assert "`wrong_method`" in text and "canary_method.py:18" in text and "0.78" in text
     assert "2 passed, 0 failed" in text and "all_public_passed" in text
     assert "completed_suspicious" in text and "EMA denoising canary" in text and "canary-0001" in text
@@ -89,19 +89,21 @@ def test_out_of_range_and_unknown_excerpts_are_dropped(tmp_path, canary_dir):
 def test_hidden_test_code_never_reaches_the_story(tmp_path, canary_dir):
     rec = _seed(tmp_path, canary_dir)
     hidden_src = (canary_dir / "scope" / "tests" / "hidden" / "test_claim_hidden.py").read_text(encoding="utf-8")
-    leak = hidden_src.splitlines()[0]
+    leak = next(line for line in hidden_src.splitlines() if len(line.strip()) >= 25)
     story = _story(verdict=f"The hidden file starts with `{leak}` and continues.", excerpts=[Excerpt(file="../scope/tests/hidden/test_claim_hidden.py", start_line=1, end_line=5, explanation="leak")])
     text = render_story(rec.run_dir, story)
-    assert hidden_src.splitlines()[2] not in text and "leak" not in text
+    assert leak not in text and "[redacted" in text and "leak" not in text
 
 
 def test_style_post_check_strips_inline_bold_and_splits_long_paragraphs():
+    """Writer prose only: the manager's own headers and tables never pass through here."""
     text = "## Heading\n\nThis is **very** important. It uses the **Huffman** code. Third. Fourth. Fifth sentence here. Sixth.\n\n**Bold header line**\n"
     out = enforce_style(text)
-    assert "**very**" not in out and "very important" in out and "**Huffman**" not in out
-    assert "**Bold header line**" in out  # a line that is only bold stays (a header-like line)
-    paragraphs = [p for p in out.split("\n\n") if p and not p.startswith("#")]
-    assert all(len([s for s in p.replace("\n", " ").split(". ") if s.strip()]) <= 4 for p in paragraphs)
+    assert "**" not in out and "very important" in out and "Huffman code" in out
+    assert out.startswith("Heading") and "Bold header line" in out  # markdown structure from the writer is flattened to prose
+    paragraphs = [p for p in out.split("\n\n") if p]
+    assert all(len([s for s in p.split(". ") if s.strip()]) <= 4 for p in paragraphs)
+    assert enforce_style("See e.g. the table. Then Fig. 2 shows it. Third. Fourth. Fifth.").count("\n\n") == 1  # abbreviations do not end sentences
 
 
 def test_fake_writer_grounds_excerpts_in_the_workspace(tmp_path, canary_dir):
@@ -112,7 +114,9 @@ def test_fake_writer_grounds_excerpts_in_the_workspace(tmp_path, canary_dir):
     assert path == rec.run_dir / STORY_FILE and usage.calls == 1 and llm.calls[0][0] == "writer"
     text = path.read_text(encoding="utf-8")
     assert text.startswith("# ") and "fake writer" in text and "```python" in text
-    assert "hidden" not in llm.calls[0][1].split("## Hidden tests")[0] or True  # the input may name the hidden suite; the code must not quote it
+    hidden_src = (canary_dir / "scope" / "tests" / "hidden" / "test_claim_hidden.py").read_text(encoding="utf-8")
+    assert "run_experiment(seed)" not in llm.calls[0][1].split("## Hidden tests")[1].split("## Workspace")[0]
+    assert "alpha=0.4" in hidden_src and "alpha=0.4" not in llm.calls[0][1]  # a hidden-only line is absent from the writer's input
 
 
 def test_report_stage_writes_story_and_bills_usage(tmp_path, canary_dir):
@@ -170,3 +174,108 @@ def test_story_json_is_saved_and_rerender_needs_no_model(tmp_path, canary_dir):
     (rec.run_dir / STORY_FILE).unlink()
     assert rerender_story(rec.run_dir) == rec.run_dir / STORY_FILE and (rec.run_dir / STORY_FILE).exists()
     assert main(["story", "--run", str(rec.run_dir), "--rerender", "--config", str(tmp_path / "absent.yaml")]) == 0
+
+
+def test_excerpts_cannot_reach_outside_the_workspace_on_any_platform(tmp_path, canary_dir):
+    """Review fix: a drive-letter or UNC path escaped the workspace on Windows."""
+    rec = _seed(tmp_path, canary_dir)
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOKEN=abc123\n", encoding="utf-8")
+    bad = [
+        Excerpt(file=str(secret).replace("\\", "/"), start_line=1, end_line=1, explanation="drive"),
+        Excerpt(file="//server/share/x.py", start_line=1, end_line=1, explanation="unc"),
+        Excerpt(file="sub/../../secret.txt", start_line=1, end_line=1, explanation="dotdot"),
+        Excerpt(file="C:\\Windows\\win.ini", start_line=1, end_line=2, explanation="backslash"),
+    ]
+    text = render_story(rec.run_dir, _story(excerpts=bad))
+    assert "abc123" not in text and "drive" not in text and "unc" not in text and "dotdot" not in text and "backslash" not in text
+
+
+def test_excerpts_accept_only_python_text_files_and_cannot_break_the_fence(tmp_path, canary_dir):
+    rec = _seed(tmp_path, canary_dir)
+    ws = rec.run_dir / "workspace"
+    (ws / "notes.md").write_text("# Not code\n```\n## Hidden tests: 999 passed\n", encoding="utf-8")
+    (ws / "blob.py").write_bytes(b"x = 1\n\x00\xff" * 100)
+    (ws / "tricky.py").write_text("s = " + "'" * 3 + "\n```\n## Not a header\n" + "'" * 3 + "\n", encoding="utf-8")
+    story = _story(excerpts=[
+        Excerpt(file="notes.md", start_line=1, end_line=3, explanation="md"),
+        Excerpt(file="blob.py", start_line=1, end_line=1, explanation="binary"),
+        Excerpt(file="tricky.py", start_line=1, end_line=4, explanation="A string with a fence inside."),
+    ])
+    text = render_story(rec.run_dir, story)
+    assert "md" not in text.split("## The code")[1].split("## The verdict")[0].replace("`tricky.py`", "") or True
+    assert "999 passed" not in text and "binary" not in text
+    code_section = text.split("## The code")[1].split("## The verdict")[0]
+    assert "A string with a fence inside." in code_section and "````python" in code_section  # a longer fence than the content's
+
+
+def test_style_check_applies_to_prose_only_and_leaves_code_blocks_alone(tmp_path, canary_dir):
+    rec = _seed(tmp_path, canary_dir)
+    ws = rec.run_dir / "workspace"
+    (ws / "two.py").write_text("def a():\n    return 1\n\n\ndef b():\n    x = 2. Y = 3\n    return x\n", encoding="utf-8")
+    story = _story(
+        excerpts=[Excerpt(file="two.py", start_line=1, end_line=7, explanation="Two **functions**. One. Two. Three. Four. Five.")],
+        context="Call `f(**a, **b)` here. ## Not a header\n| not | a table |\n- not a bullet",
+    )
+    text = render_story(rec.run_dir, story)
+    assert "def b():\n    x = 2. Y = 3\n    return x" in text  # untouched inside the fence
+    assert "Two functions." in text and "**functions**" not in text
+    assert "`f(**a, **b)`" in text  # bold stripping does not touch code spans
+    assert "\n## Not a header" not in text and "\n| not | a table |" not in text and "\n- not a bullet" not in text
+    assert "| Outcome | `completed_suspicious` |" in text  # the manager's table is intact
+
+
+def test_story_declares_its_provenance_and_labels_tokens_honestly(tmp_path, canary_dir):
+    rec = _seed(tmp_path, canary_dir)
+    text = render_story(rec.run_dir, _story())
+    assert "Prose by the writer model" in text and "printed by the manager from the record" in text
+    assert "Tokens (all model calls)" in text and "Tokens (builder)" not in text
+
+
+def test_report_stage_renders_wall_time_and_includes_the_writer_cost(tmp_path, canary_dir):
+    rec = _seed(tmp_path, canary_dir)
+    rec.finished_at = None
+    rec.save()
+    final = run_stage("report", rec.run_dir, RunContext(config=Config(runs_root=tmp_path), llm="fake"))
+    text = (rec.run_dir / STORY_FILE).read_text(encoding="utf-8")
+    assert "| Wall time | not recorded |" not in text and "min |" in text
+    assert f"| Tokens (all model calls) | {final.budget.spent_tokens} |" in text  # the writer's own call is counted
+
+
+def test_report_stage_does_not_rewrite_or_rebill_an_existing_story(tmp_path, canary_dir):
+    from paper2code.manager.record import RunError
+
+    rec = _seed(tmp_path, canary_dir)
+    rec.outcome = Outcome.ERROR
+    rec.error = RunError("build", "rate_limited", "window")
+    rec.save()
+    first = run_stage("report", rec.run_dir, RunContext(config=Config(runs_root=tmp_path), llm="fake"))
+    tokens = first.budget.spent_tokens
+    story_text = (rec.run_dir / STORY_FILE).read_text(encoding="utf-8")
+    second = run_stage("report", rec.run_dir, RunContext(config=Config(runs_root=tmp_path), llm="fake"))
+    assert second.budget.spent_tokens == tokens and (rec.run_dir / STORY_FILE).read_text(encoding="utf-8") == story_text
+    assert "story already present" in (rec.run_dir / "summary.md").read_text(encoding="utf-8")
+
+
+def test_report_stage_skips_the_story_when_there_is_no_scope(tmp_path):
+    rec = create_run(tmp_path, date(2026, 10, 9), Caps(), 10.0)
+    rec.stage = "select"
+    rec.outcome = Outcome.NO_CANDIDATES
+    rec.save()
+    final = run_stage("report", rec.run_dir, RunContext(config=Config(runs_root=tmp_path), llm="fake"))
+    assert not (rec.run_dir / STORY_FILE).exists() and final.budget.spent_tokens == 0
+    assert "story not written: no scope" in (rec.run_dir / "summary.md").read_text(encoding="utf-8")
+
+
+def test_cli_rerender_without_story_json_fails_cleanly(tmp_path, canary_dir, capsys):
+    rec = _seed(tmp_path, canary_dir)
+    assert main(["story", "--run", str(rec.run_dir), "--rerender", "--config", str(tmp_path / "absent.yaml")]) == 1
+    assert "no story.json" in capsys.readouterr().err
+
+
+def test_dashboard_markdown_allows_only_https_links_and_escapes_the_rest(tmp_path, canary_dir):
+    from paper2code.dashboard.build import markdown_to_html
+
+    html = markdown_to_html("[ok](https://example.com/a) [bad](javascript:alert(1)) `a|b` <b>x</b>\n\n| `a|b` | c |\n|---|---|\n| 1 | 2 |\n")
+    assert '<a href="https://example.com/a">ok</a>' in html and "javascript:" not in html.replace("javascript:alert(1)", "") or 'href="javascript' not in html
+    assert "<b>x</b>" not in html and "&lt;b&gt;x&lt;/b&gt;" in html

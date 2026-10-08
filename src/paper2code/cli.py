@@ -123,20 +123,22 @@ def _story(args: argparse.Namespace) -> int:
 
     config = _load_config(args.config)
     if args.rerender:
-        print(f"story re-rendered to {rerender_story(args.run)}")
+        try:
+            print(f"story re-rendered to {rerender_story(args.run)}")
+        except FileNotFoundError as exc:
+            print(f"story failed: {exc}", file=sys.stderr)
+            return 1
         return 0
     ctx = RunContext(config=config, llm=args.llm or config.llm)
     record = RunRecord.load(args.run)
     usage = Usage()
     try:
-        path = write_story(args.run, make_chat_model(ctx), usage, config.inspector_max_chars)
+        path = write_story(args.run, make_chat_model(ctx), usage, config.inspector_max_chars, record=record)
     except Exception as exc:
         print(f"story failed: {exc}", file=sys.stderr)
         return 1
     finally:
-        record.budget.spent_usd += usage.cost_usd
-        record.budget.spent_tokens += usage.input_tokens + usage.output_tokens
-        record.save()
+        record.save()  # write_story charged the writer's usage to the record
     print(f"story written to {path} ({usage.cost_usd:.3f} USD)")
     return 0
 

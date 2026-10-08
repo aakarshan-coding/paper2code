@@ -98,18 +98,25 @@ script with the Write tool and run that.
 
 ## Writing for the person using this repo
 
-Explanations are written for clarity and continuity. The reader is following a long project
-across many sessions and wants to understand what happened and why, not decode a changelog.
+Write every reply in simplified technical English. The reader follows this project across many
+sessions. They understand the project, but they do not remember every detail, name, or earlier
+decision. They want to know what happened and why, in plain words.
 
-Assume the reader understands the project technically, but does NOT necessarily remember every experiment ID,
-implementation detail, previous debugging decision, or piece of terminology from earlier in the session. 
+Rules for every reply:
 
-
-- Prefer complete, conversational technical explanations over compressed changelog prose. Say
-  what changed, why it was needed, what it means for the next step, and what was decided along
-  the way, in full sentences.
-- After every change, give a brief plain-language recap. Brief means leaving things out, not
-  compressing what is left into fragments.
-- Lead with the outcome. Name files or functions only when the reader has to open them.
+- Use short sentences. One idea per sentence. About 15 words or fewer where possible.
+- Use common words. Say "check" not "verify", "start" not "initiate", "use" not "leverage".
+- Keep technical terms when they are the real name of a thing (sandbox, hidden tests, verdict).
+  Explain a term in a few words the first time it appears in a reply, for example "the witness
+  hook (a small plugin that records what each test did)".
+- No idioms, no metaphors, no clever phrasing. Say the plain thing.
+- Lead with the result. Then say what changed, why it was needed, and what it means for the
+  next step. Full sentences, not fragments.
+- After every change, give a short plain-language recap. Short means leaving things out, not
+  squeezing everything in.
+- Name a file or function only when the reader needs to open it.
+- Put numbers on their own line or in a small table, not inside a sentence.
+- Use a list for parallel items. Keep each item to one or two sentences.
 - Record decisions and their reasons in `decisions.md` as they happen, so the story stays
-  continuous across sessions.
+  continuous across sessions. The journal may use fuller prose than replies, but it must still be
+  simple and clear.

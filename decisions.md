@@ -512,3 +512,45 @@ The last step makes the loop run on its own. One command, `paper2code daily`, do
 - **One Modal secret** holds the OpenAI key, the subscription token and the GitHub token. `ANTHROPIC_API_KEY` is removed from the environment before the manager starts, as the spec requires.
 - **Two runs on the same day** get `-2`, `-3` suffixes, as the spec says. The second run usually ends `no_candidates` because the first one already graded the day's papers.
 - **Things only the author can do:** create the runs repository on GitHub, create a push token, create the Modal secret, turn the schedule on, and approve the first real run. The plan stops before those.
+
+## 2026-10-07: Step 6 built, the daily run
+
+Five tasks, test-first, then a fresh review and one fix pass. The suite went from 323 to 357 tests. The loop now has a single command for a whole day, and a cloud function that can run it on a schedule.
+
+### What `paper2code daily` does
+
+First it runs preflight: a set of free checks. Is the OpenAI key present? Can the `claude` program be found? Is the GPU test function deployed on Modal? Do the two timeouts agree? Can the runs repository be reached? If any check fails, nothing is created and nothing is spent. Then it creates today's run directory (or `-2`, `-3` for a second run on the same day), runs the seven stages, and after every stage commits the run directory to the runs repository and pushes it. At the end it rebuilds the dashboard, a static website with one row per run and one page per run, pushes again, and sends an optional notification. A crashed run is still published and still shows on the dashboard. `daily --run DIR` resumes an existing run with the same publishing.
+
+### What the cloud schedule is
+
+A Modal function named `daily_run` that runs the same command inside a container once a day. The container has the package, the config file, and the `claude` program, which the Agent SDK's Linux build bundles (checked by opening the wheel: a 251 MB binary). Secrets come from one Modal secret. The function raises when the day did not finish cleanly, so Modal shows the call as failed. It is written and tested but not deployed: the author chose to keep the schedule off until a few runs look good.
+
+### What was rehearsed
+
+A full offline day on this machine: the real arXiv feed, the fake model, the stub builder, and a local git repository as the remote. The first run ended `completed`. A second run the same day became `2026-10-07-2` and ended `no_candidates`, because the first run had already graded the day's papers. The dashboard listed both. The first real paid run waits for the author's go-ahead and for the runs repository and token, which only the author can create.
+
+### What the review found
+
+One critical finding, seven important, nine minor. All critical and important ones were fixed test-first.
+
+1. **The push wrote the GitHub token into the runs repository's own git config.** The push command used `-u`, which records the push URL as the branch's upstream, and that URL carried the token. In local mode the builder's shell runs inside that repository, so the token would have been one command away from an untrusted model. The fix removes the token from every URL: it now travels in an HTTP header passed on the git command line for clone, fetch and push only, and the push goes by remote name. A test publishes to a local remote with a token set and checks that the config file contains neither the token nor an upstream.
+2. **A crash between clone and the config rewrite** could have left the token on disk forever. Moot now that no URL carries it, and the clean URL is re-applied on every start.
+3. **Redaction ran after truncation**, so a token at the edge of a cut error message could survive. Order swapped.
+4. **`daily --run DIR` was accepted and ignored**, and a run resumed the old way never reached the remote. Resume is now real, and the final publish stages the whole runs directory.
+5. **Unattended failures were silent.** A preflight refusal or a crash sent no notification and the Modal call looked successful. Every end state now notifies with a status, and the cloud function fails loudly on a bad exit.
+6. **The cron setting in the config file did nothing**; only an environment variable was read. The deploy now reads the config file, and environment variables override it.
+7. **Falling back to a fresh local repository on any clone failure** (a ruling I made in Task 1) was wrong: in the cloud it would have meant a paid run whose pushes are all rejected and whose record vanishes with the container. The fallback is now only for an empty remote; an unreachable remote stops the day before anything is spent; and an existing plain directory adopts the remote's history so the first push fast-forwards.
+8. **No journal entry yet.** This is it.
+
+The minors are in the ledger and the branch's final message. Two are worth doing soon: the runs repository should get a `.gitignore`, and the dashboard should drop pages of runs that no longer exist.
+
+### Lesson worth a blog paragraph
+
+The critical finding came from a flag I added without thinking: `-u` on `git push`, the habit of every interactive push. It made git remember the URL, and the URL held a secret. The lesson is that any convenience flag on a command that handles a secret needs a reason, and the test that was supposed to guard the config file checked it at the wrong moment, before any push. The reviewer's suggestion, never put a secret in a URL at all, is the kind of invariant that is easy to test and hard to break by accident. The second lesson is about rulings: I had widened a fallback to make a test pass locally, and the reviewer traced what that widening would cost in the cloud. Rulings are cheap to make and the ledger made this one easy to find and reverse.
+
+### Open items the author owns
+
+- Create the runs repository on GitHub and a token with Contents: read and write; set `runs_repo_url` and `GITHUB_TOKEN`.
+- Create the Modal secret `paper2code` from the shell and deploy `daily_run` when ready; `modal app stop paper2code` turns it off.
+- Approve the first real paid run.
+- Optionally enable GitHub Pages on the runs repository (branch `main`, folder `/docs`).

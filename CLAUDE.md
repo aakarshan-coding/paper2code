@@ -35,15 +35,19 @@ src/paper2code/
   agents/inspector     code review against the paper: capped input bundle, fixed-kind flags, heuristic fake
   agents/builder       Builder protocol, stub builder, Agent SDK builder with six confined tools
   manager/review.py    mechanical reviews: build-log probing/shrinking counts, workspace test-detection scan
+  manager/daily.py     one unattended day: preflight, run, publish after every stage, dashboard, notify
+  manager/preflight.py free checks before any spend (keys, claude CLI, GPU function, timeouts, runs repo)
+  manager/runs_repo.py the runs directory as a git repository: clone/init, commit, push with a redacted token
+  dashboard/build.py   static site over the runs root (index + one page per run); hidden tests never copied
   policies/            selection policies, plain functions over scorecard rows
   sandbox/runner.py    LocalTestRunner: pytest in an isolated subprocess with a witness hook (cross-check)
   sandbox/modal_*.py   Modal sandbox workspace, GPU test function, session lifetime, remote runner
 tests/                 pytest; tests/fixtures/canary is the EMA denoising canary assignment
 ```
 
-Build order (spec section 16): 1 skeleton, 2 scout, 3 scoper, 4 builder (Agent SDK, Modal
-sandbox and GPU test runner), 5 inspector (code review, mechanical reviews, canaries) are done;
-6 schedule, dashboard and the runs repository remain.
+Build order (spec section 16): all six steps are done: 1 skeleton, 2 scout, 3 scoper, 4 builder
+(Agent SDK, Modal sandbox and GPU test runner), 5 inspector (code review, mechanical reviews,
+canaries), 6 daily run, runs repository, dashboard and the scheduled Modal function.
 
 ## How work is done here
 
@@ -80,6 +84,11 @@ script with the Write tool and run that.
   workspace size). `--llm fake` exercises the whole pipeline with no model, including a heuristic
   fake inspector. Prefer it unless the live result is the point; the unit suite never calls a model.
 - `OPENAI_API_KEY` lives in the Windows user environment, never in the repo or in chat.
+- `paper2code daily` spends everything in one go (scout, scoper, builder time, GPU, inspector).
+  Run `paper2code preflight` first; it is free. The Modal schedule (`daily_run`) spends every day
+  until `python -m modal app stop paper2code`. Deploying it needs the Modal secret `paper2code`
+  (`OPENAI_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`, optional `GITHUB_TOKEN`), created from the shell,
+  never from a file.
 - The builder (step 4) runs on the Claude Max subscription via `CLAUDE_CODE_OAUTH_TOKEN` from
   `claude setup-token`. `ANTHROPIC_API_KEY` must never be set in the builder's environment; it
   silently overrides the subscription token.

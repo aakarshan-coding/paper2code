@@ -7,13 +7,13 @@ happened. The record is the product. Design spec:
 
 ## Status
 
-Build step 5 of 6: the inspector reviews the builder's code against the paper (one structured
-call on the inspector model, flags limited to the spec's fixed checklist), two mechanical reviews
-flag hidden-test probing, shrinking test counts and test-harness detection, and the test runner
-itself catches in-process report tampering through a witness hook. The adversarial canaries from
-the spec live in `tests/test_adversarial_canaries.py`. The builder runs in a Modal sandbox and
-tests run in a Modal GPU function (`--no-gpu` keeps everything local). Step 6 is the schedule and
-dashboard.
+All six build steps are done. `paper2code daily` runs one unattended day: a preflight check that
+spends nothing, then the seven stages, pushing the run directory to the runs repository after every
+stage, then the static dashboard under `<runs_root>/docs`, then an optional notification. A Modal
+scheduled function (`daily_run`) runs the same command once a day. The builder works in a Modal
+sandbox and tests run in a Modal GPU function (`--no-gpu` keeps everything local); the inspector
+reviews the code against the paper; the adversarial canaries live in
+`tests/test_adversarial_canaries.py`.
 
 ## Setup
 
@@ -48,6 +48,34 @@ PAPER2CODE_LIVE_INSPECT=1 pytest tests/test_live_inspector.py -q -s   # opt-in: 
 paper2code run --run runs/<date> --no-gpu --builder agent        # real agent, local workspace (no sandbox)
 PAPER2CODE_LIVE_BUILD=1 pytest tests/test_live_agent.py -q -s     # opt-in live build of the canary
 ```
+
+## Daily run
+
+```bash
+paper2code preflight                       # keys, claude CLI, GPU function, timeouts, runs repository; exit 2 on a problem
+paper2code daily --no-publish              # one real day on this machine, no runs repository
+paper2code daily                           # same, and push the run directory after every stage (needs runs_repo_url and GITHUB_TOKEN)
+paper2code dashboard                       # rebuild <runs_root>/docs by hand
+paper2code daily --llm fake --no-gpu --builder stub --reference tests/fixtures/canary/reference --no-publish   # offline rehearsal
+```
+
+The runs directory is its own git repository (`runs_repo_url` in `config.yaml`; empty means a
+local repository with no remote). `seen.jsonl`, every run, and the dashboard live there. To serve
+the dashboard with GitHub Pages: repository Settings, Pages, branch `main`, folder `/docs`. The
+dashboard never copies the hidden tests, so the site can be public; the run directories in the
+repository do contain them.
+
+The scheduled cloud run needs one Modal secret and a deploy:
+
+```bash
+python -m modal secret create paper2code OPENAI_API_KEY=$OPENAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN GITHUB_TOKEN=$GITHUB_TOKEN
+PYTHONUTF8=1 PAPER2CODE_SCHEDULE="0 13 * * *" python -m modal deploy src/paper2code/sandbox/modal_app.py
+python -m modal app stop paper2code        # turns the schedule (and the GPU function) off
+```
+
+`daily_run` runs `paper2code daily` inside a Modal container that has the package, `config.yaml`,
+and the Agent SDK's bundled `claude` binary. It spends every day it runs; preflight stops it when a
+key, the GPU function or the runs repository is missing.
 
 ## Modal
 

@@ -554,3 +554,29 @@ The critical finding came from a flag I added without thinking: `-u` on `git pus
 - Create the Modal secret `paper2code` from the shell and deploy `daily_run` when ready; `modal app stop paper2code` turns it off.
 - Approve the first real paid run.
 - Optionally enable GitHub Pages on the runs repository (branch `main`, folder `/docs`).
+
+## 2026-10-08: The first real run
+
+With the runs repository and token in place, the author gave the go-ahead and `paper2code daily` ran on the author's machine with everything real: today's arXiv feeds, the OpenAI scout and scoper, a Claude agent in a Modal sandbox, tests on the Modal GPU function, the OpenAI inspector, and a push to GitHub after every stage. Here is what one day looks like.
+
+| Stage | What happened | Time |
+|---|---|---|
+| fetch | 436 papers from cs.LG, cs.CL and stat.ML | about 1 min |
+| score | the scout graded them; top pick "NeuralZip: Reusable Setup for Fast Lossless Compression" (2610.09916) | about 4 min |
+| scope | the scoper wrote the assignment on its first try: a small lossless BF16 weight compressor with reusable Huffman codebooks, 3 public test files, 2 hidden, stub check clean | about 1.5 min |
+| build | sandbox up in 1 s; the agent wrote one module, ran two quick checks, pressed run_tests once: 7 of 7 public tests passed | 2 min 20 s |
+| inspect | hidden tests 5 of 5 passed; mechanical checks clean; the inspector raised one `wrong_method` flag | about 30 s |
+| report | summary written, dashboard rebuilt, everything pushed | seconds |
+
+Totals: 9 minutes end to end, 1.63 USD of OpenAI spend, 13 GPU seconds, about 445 thousand tokens of subscription usage (most of it the agent re-reading its cached prompt). Outcome: `completed_suspicious`.
+
+### The flag
+
+The inspector's confidence that the code is the paper's method was 0.78, and it pointed at one line. The assignment says the reusable Huffman table must cover all 256 singleton exponents plus the packed pairs. The agent built it over the exponents it had actually seen plus an escape symbol for unseen ones, with a comment explaining why. That is a defensible engineering choice, and it is also not what the spec asked for. The flag is exactly the kind of thing the inspector exists to surface: the tests cannot tell the difference, a reader can, and the verdict rule turns it into "completed, but look". Whether it should count against the builder is a judgment the record now makes visible rather than hides.
+
+### Two things learned
+
+- **The inspector's input caps were tuned on the canary.** The real paper is 58 thousand characters and the agent's module 21 thousand; both were cut (the summary says "inspector input truncated: 2 items"). The review still landed on a real line, but a judgment about method fidelity should see the whole paper. The cap goes from 120 to 300 thousand characters, about 0.4 USD per inspection at most.
+- **The build was over in two minutes.** The caps were designed for a two-hour struggle; the agent did not need one. That is good news for cost and a reminder that the hard part of the loop is not the building, it is deciding whether what was built is honest.
+
+Everything from this run, including the hidden tests, is in the runs repository; the dashboard copy omits them.

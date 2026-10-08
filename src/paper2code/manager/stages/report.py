@@ -1,8 +1,11 @@
 """Report stage: summary.md. Commit, push, dashboard and notifications land in build step 6."""
 from __future__ import annotations
 
+from paper2code.llm.base import LLMError, Usage
+from paper2code.llm.factory import make_chat_model
 from paper2code.manager.graph import RunContext
 from paper2code.manager.record import RunRecord, utcnow
+from paper2code.manager.story import STORY_FILE, write_story
 from paper2code.manager.verdict import VERDICT_JSON, Verdict
 
 
@@ -49,4 +52,21 @@ def render_summary(record: RunRecord, verdict: Verdict | None) -> str:
 def run(record: RunRecord, ctx: RunContext) -> None:
     record.finished_at = utcnow()
     verdict = Verdict.load(record.run_dir) if (record.run_dir / VERDICT_JSON).exists() else None
-    (record.run_dir / "summary.md").write_text(render_summary(record, verdict), encoding="utf-8")
+    summary_path = record.run_dir / "summary.md"
+    summary_path.write_text(render_summary(record, verdict), encoding="utf-8")
+    # The story is prose for readers; it never changes the outcome, so any failure is a note, not an error.
+    usage = Usage()
+    note = ""
+    try:
+        write_story(record.run_dir, make_chat_model(ctx), usage, ctx.config.inspector_max_chars)
+    except LLMError as exc:
+        note = f"story not written: {exc}"
+    except Exception as exc:
+        note = f"story not written: {type(exc).__name__}: {exc}"
+    finally:
+        record.budget.spent_usd += usage.cost_usd
+        record.budget.spent_tokens += usage.input_tokens + usage.output_tokens
+    if note:
+        summary_path.write_text(summary_path.read_text(encoding="utf-8") + f"\n{note}\n", encoding="utf-8")
+    else:
+        summary_path.write_text(summary_path.read_text(encoding="utf-8") + f"\nStory: `{STORY_FILE}`\n", encoding="utf-8")

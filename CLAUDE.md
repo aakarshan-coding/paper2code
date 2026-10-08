@@ -33,6 +33,8 @@ src/paper2code/
   llm/                 ChatModel interface, OpenAI structured-output client, fake, cost accounting
   agents/scout, scoper prompts + pydantic schemas; agents/fake.py answers every role offline
   agents/inspector     code review against the paper: capped input bundle, fixed-kind flags, heuristic fake
+  agents/writer        the run's story (story.md): prose from the writer model, facts and code from the record
+  manager/story.py     story facts, renderer (tables, excerpts from real lines, style post-check), rerender
   agents/builder       Builder protocol, stub builder, Agent SDK builder with six confined tools
   manager/review.py    mechanical reviews: build-log probing/shrinking counts, workspace test-detection scan
   manager/daily.py     one unattended day: preflight, run, publish after every stage, dashboard, notify
@@ -79,9 +81,9 @@ script with the Write tool and run that.
 
 ## Money and secrets
 
-- Scout, scoper and inspector calls go to OpenAI and cost real money (about 1 USD for a day's
-  scoring, about 0.35 USD per scoping attempt, about 0.02 to 0.3 USD per inspection depending on
-  workspace size). `--llm fake` exercises the whole pipeline with no model, including a heuristic
+- Scout, scoper, inspector and writer calls go to OpenAI and cost real money (about 1 USD for a
+  day's scoring, about 0.35 USD per scoping attempt, about 0.02 to 0.3 USD per inspection, about
+  0.2 USD per story). `--llm fake` exercises the whole pipeline with no model, including a heuristic
   fake inspector. Prefer it unless the live result is the point; the unit suite never calls a model.
 - `OPENAI_API_KEY` lives in the Windows user environment, never in the repo or in chat.
 - `paper2code daily` spends everything in one go (scout, scoper, builder time, GPU, inspector).

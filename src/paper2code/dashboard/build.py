@@ -13,7 +13,7 @@ from paper2code.manager.verdict import VERDICT_JSON, Verdict
 
 SITE_DIR = "docs"
 _DRILLDOWN = (
-    "run.json", "summary.md", "verdict.json", "build.log", "candidates.jsonl", "selected.json",
+    "run.json", "summary.md", "story.md", "verdict.json", "build.log", "candidates.jsonl", "selected.json",
     "scope_attempts.jsonl", "scope/spec.md", "scope/interface.md", "scope/manifest.json",
 )
 _DRILLDOWN_GLOBS = ("scope/tests/public/*.py", "workspace/**/*.py")
@@ -78,6 +78,79 @@ def collect_runs(runs_root: Path) -> list[RunRow]:
     return rows
 
 
+def markdown_to_html(text: str) -> str:
+    """Enough Markdown for story.md: headers, paragraphs, fenced code, tables, bullet lists, inline code.
+    Everything is escaped first; no raw HTML passes through."""
+    out: list[str] = []
+    lines = text.splitlines()
+    i = 0
+    paragraph: list[str] = []
+
+    def flush() -> None:
+        if paragraph:
+            out.append("<p>" + _inline(" ".join(paragraph)) + "</p>")
+            paragraph.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("```"):
+            flush()
+            i += 1
+            code: list[str] = []
+            while i < len(lines) and not lines[i].startswith("```"):
+                code.append(lines[i])
+                i += 1
+            out.append("<pre><code>" + _esc("\n".join(code)) + "</code></pre>")
+            i += 1
+            continue
+        if line.startswith("#"):
+            flush()
+            level = min(len(line) - len(line.lstrip("#")), 6)
+            out.append(f"<h{level}>{_inline(line.lstrip('#').strip())}</h{level}>")
+            i += 1
+            continue
+        if line.startswith("|"):
+            flush()
+            rows: list[str] = []
+            while i < len(lines) and lines[i].startswith("|"):
+                rows.append(lines[i])
+                i += 1
+            cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
+            body = [r for r in cells if not all(set(c) <= set("-: ") for c in r)]
+            html_rows = []
+            for n, r in enumerate(body):
+                tag = "th" if n == 0 else "td"
+                html_rows.append("<tr>" + "".join(f"<{tag}>{_inline(c)}</{tag}>" for c in r) + "</tr>")
+            out.append("<table>" + "".join(html_rows) + "</table>")
+            continue
+        if line.startswith(("- ", "* ")):
+            flush()
+            items: list[str] = []
+            while i < len(lines) and lines[i].startswith(("- ", "* ")):
+                items.append(f"<li>{_inline(lines[i][2:].strip())}</li>")
+                i += 1
+            out.append("<ul>" + "".join(items) + "</ul>")
+            continue
+        if not line.strip():
+            flush()
+            i += 1
+            continue
+        paragraph.append(line.strip())
+        i += 1
+    flush()
+    return "\n".join(out)
+
+
+def _inline(text: str) -> str:
+    """Escape, then allow inline code and links only."""
+    import re
+
+    escaped = _esc(text)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', escaped)
+    return escaped
+
+
 def _page(title: str, body: str) -> str:
     return (
         f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">'
@@ -138,6 +211,10 @@ def _run_html(row: RunRow, files: list[str]) -> str:
         parts.append(f"<p>Paper: {link} ({_esc(row.arxiv_id)})</p>")
     if row.error:
         parts.append(f"<p><b>Error:</b> {_esc(row.error)}</p>")
+    story = row.run_dir / "story.md"
+    if story.exists():
+        parts.append("<h2>Story</h2>")
+        parts.append(markdown_to_html(story.read_text(encoding="utf-8", errors="replace")))
     summary = row.run_dir / "summary.md"
     parts.append("<h2>Summary</h2>")
     if summary.exists():

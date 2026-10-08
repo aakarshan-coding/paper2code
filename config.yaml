@@ -23,6 +23,7 @@ models:
   scout_pass2: gpt-5.5        # strongest reasoning model, at most max_fulltext_candidates calls a day
   scoper: gpt-5.5
   inspector: gpt-5.5
+  writer: gpt-5.5             # the per-run story (story.md); about 0.2 to 0.4 USD per run
   builder: ""                 # empty = Agent SDK default under the subscription
 prices:                       # USD per 1M tokens, checked 2026-10-06
   gpt-5.4-nano: {input: 0.20, output: 1.25}

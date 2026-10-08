@@ -580,3 +580,27 @@ The inspector's confidence that the code is the paper's method was 0.78, and it 
 - **The build was over in two minutes.** The caps were designed for a two-hour struggle; the agent did not need one. That is good news for cost and a reminder that the hard part of the loop is not the building, it is deciding whether what was built is honest.
 
 Everything from this run, including the hidden tests, is in the runs repository; the dashboard copy omits them.
+
+## 2026-10-08: The story of a run
+
+The author looked at the first real run and asked for one thing: the run directory had a paper, a spec, tests, code and a verdict in separate files, and they wanted it consolidated into one easy-to-follow, blog-style file per run, written in Martin Fowler's practitioner voice. This was a bounded change to the report stage, so it went through a short in-chat design rather than a full spec.
+
+### How it works
+
+Every run now gets `story.md`. A new model role, the writer (gpt-5.5), reads the same bundle the inspector reads (paper, spec, tests, the agent's code with numbered lines, the build log) plus a block of authoritative facts from the record, and returns prose for a fixed set of sections: context, assignment, build, verdict, assessment, a title, and two or three code excerpts given as line ranges. The manager then renders the file. Every number, table, test result and code line in the finished file comes from the record: the cost table from `run.json`, the flags from `verdict.json`, the build timeline from `build.log`, and each excerpt read from the real workspace file at the lines the writer named. An excerpt that points outside the file, outside the workspace, or at a hidden test is dropped. Hidden test code is never quoted; the writer is told to describe what the hidden tests check.
+
+The style rules the author supplied go into the prompt verbatim: structural authority, short paragraphs, active verbs, no bold inside sentences, terms defined on first use. A post-check enforces the two that can be enforced mechanically: inline bold is stripped and paragraphs longer than four sentences are split. The writer's raw output is saved as `story.json` so the file can be re-rendered after a renderer change without paying for another call.
+
+### Decisions
+
+- **Model prose, record facts.** The author chose a model-written narrative over a template. The split is strict: the model may not state a number the manager does not print, and the manager prints nothing the model wrote except prose. That keeps the file honest in the same way the verdict is: judgment is labelled as judgment.
+- **The story never changes the outcome.** It is written after the verdict, in the report stage. If the writer fails, the run finishes normally and `summary.md` says the story was not written.
+- **Published with the run.** The dashboard renders the story on the run's page through a small Markdown converter that escapes everything first and allows only inline code and links.
+
+### The first real story
+
+Generated for the NeuralZip run: about 1,700 words, 24 seconds, 0.21 USD. The writer picked the setup-fitting block that contains the flagged line, the post-setup compression function, and the decompressor, and explained each in one paragraph. Its assessment said what a careful reader would: the scaled claim holds under the tests, the experiment is a synthetic simulation that does not validate the paper's wall-clock numbers, and the agent cut one corner by using an escape symbol instead of the full singleton alphabet. The first draft exposed two renderer problems, multi-line shell commands breaking the timeline bullets and the test run appearing twice, which were fixed test-first and the story re-rendered.
+
+### Lesson worth a blog paragraph
+
+A model can write a good narrative about a run when it is not allowed to be the source of any fact in it. The structure that makes this safe is the same one the inspector uses: the model points (a line range, a judgment), the manager prints (the lines, the numbers). The reader gets prose that reads like a person wrote it, and every checkable claim in it can be traced to a file in the record.

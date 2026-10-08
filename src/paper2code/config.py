@@ -31,6 +31,7 @@ DEFAULT_MODELS: dict[str, str] = {
     "scout_pass2": "gpt-5.5",
     "scoper": "gpt-5.5",
     "inspector": "gpt-5.5",
+    "writer": "gpt-5.5",
     "builder": "",  # empty = Agent SDK default under the subscription
 }
 

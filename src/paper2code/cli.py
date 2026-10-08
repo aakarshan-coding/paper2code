@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_run_args(pre)
     pre.add_argument("--no-publish", action="store_true")
 
+    story = sub.add_parser("story", help="write (or rewrite) the run's story.md with the writer model")
+    story.add_argument("--run", type=Path, required=True)
+    story.add_argument("--llm", choices=LLM_CHOICES, default=None)
+    story.add_argument("--rerender", action="store_true", help="re-render story.md from the saved story.json; no model call")
+    _add_common(story)
+
     dash = sub.add_parser("dashboard", help="rebuild the static dashboard under <runs_root>/docs")
     dash.add_argument("--runs-root", type=Path)
     dash.add_argument("--out", type=Path, default=None)
@@ -107,6 +113,32 @@ def _context(parser: argparse.ArgumentParser, args: argparse.Namespace, until: s
         llm=args.llm or config.llm,
         until=until,
     )
+
+
+def _story(args: argparse.Namespace) -> int:
+    from paper2code.llm.base import Usage
+    from paper2code.llm.factory import make_chat_model
+    from paper2code.manager.record import RunRecord
+    from paper2code.manager.story import rerender_story, write_story
+
+    config = _load_config(args.config)
+    if args.rerender:
+        print(f"story re-rendered to {rerender_story(args.run)}")
+        return 0
+    ctx = RunContext(config=config, llm=args.llm or config.llm)
+    record = RunRecord.load(args.run)
+    usage = Usage()
+    try:
+        path = write_story(args.run, make_chat_model(ctx), usage, config.inspector_max_chars)
+    except Exception as exc:
+        print(f"story failed: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        record.budget.spent_usd += usage.cost_usd
+        record.budget.spent_tokens += usage.input_tokens + usage.output_tokens
+        record.save()
+    print(f"story written to {path} ({usage.cost_usd:.3f} USD)")
+    return 0
 
 
 def _daily_or_preflight(parser: argparse.ArgumentParser, args: argparse.Namespace) -> int:
@@ -169,6 +201,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"created {record.run_dir}")
         return 0
 
+    if args.command == "story":
+        return _story(args)
     if args.command == "dashboard":
         config = _load_config(args.config)
         out = build_site(args.runs_root or config.runs_root, args.out)

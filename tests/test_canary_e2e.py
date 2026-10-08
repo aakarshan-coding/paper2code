@@ -28,7 +28,7 @@ def test_canary_reaches_completed(tmp_path, canary_dir):
     assert rec.finished_at is not None
     assert rec.counters.test_runs_used == 1
     assert sorted(p.name for p in run_dir.iterdir()) == [
-        "build.log", "run.json", "scope", "summary.md", "verdict.json", "workspace",
+        "build.log", "run.json", "scope", "story.json", "story.md", "summary.md", "verdict.json", "workspace",
     ]
     assert Verdict.load(run_dir).outcome is Outcome.COMPLETED
     assert "completed" in (run_dir / "summary.md").read_text(encoding="utf-8")

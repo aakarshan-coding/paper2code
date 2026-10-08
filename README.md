@@ -79,6 +79,22 @@ python -m modal app stop paper2code        # turns the schedule (and the GPU fun
 and the Agent SDK's bundled `claude` binary. It spends every day it runs; preflight stops it when a
 key, the GPU function or the runs repository is missing.
 
+## The story of a run
+
+Every run gets `story.md`, a blog-style write-up in a practitioner's voice: context, the assignment,
+the build, two or three code excerpts, the verdict, a cost table, and an assessment. A writer model
+(gpt-5.5 by default, role `writer`) supplies the prose; the manager fills in every number, table, test
+result and code line from the record, so nothing factual comes from the model. Hidden tests are never
+quoted. The writer's output is kept as `story.json` so the file can be re-rendered without a model call.
+
+```bash
+paper2code story --run runs/2026-10-08              # write or rewrite the story (about 0.2 USD)
+paper2code story --run runs/2026-10-08 --rerender   # re-render from story.json, no model call
+```
+
+The report stage writes the story at the end of every run; if the writer fails, the run's outcome is
+unchanged and `summary.md` says the story was not written. The dashboard renders it on the run's page.
+
 ## Modal
 
 Without `--no-gpu`, the agent works inside a Modal sandbox and every `run_tests` call (and the

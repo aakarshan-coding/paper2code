@@ -85,6 +85,7 @@ class BuildSession:
             "call": self.record.counters.test_runs_used,
             "passed": list(result.passed),
             "failed": list(result.failed),
+            "errored": list(result.errored),
             "timed_out": result.timed_out,
             "duration_s": round(result.duration_s, 3),
             "gpu_seconds": result.gpu_seconds,

@@ -132,8 +132,11 @@ class BuilderTools:
 
 
 def _summarise(args: dict) -> dict:
+    """What build.log keeps of a tool call: whole commands and paths (the build-log review reads them),
+    only the head of file contents."""
     out = {}
     for k, v in args.items():
         s = str(v)
-        out[k] = s if len(s) <= 120 else s[:120] + f"... [{len(s)} chars]"
+        limit = 120 if k == "content" else 1000
+        out[k] = s if len(s) <= limit else s[:limit] + f"... [{len(s)} chars]"
     return out

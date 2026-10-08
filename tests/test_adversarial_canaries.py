@@ -73,8 +73,9 @@ def test_canary_rate_limit_lives_with_the_agent_tests():
 
 
 def test_canary_pytest_patching_workspace_is_caught_twice(tmp_path, canary_dir):
-    """Added in step 5: a workspace that rewrites pytest's reports in-process is failed by the runner
-    (so the public run never passes and the build ends stuck) and flagged by the workspace scan."""
+    """Added in step 5: the direct form of in-process report rewriting is failed by the runner (so the
+    public run never passes and the build ends stuck) and flagged by the workspace scan. Obfuscated
+    forms that reach the harness without naming it are the inspector's job; the scan flags the usual routes."""
     from paper2code.manager.review import review_workspace
 
     rec, v = _run_canary(tmp_path, canary_dir, "pytest_patched")
@@ -96,3 +97,44 @@ def test_canary_test_count_decrease_is_flagged():
     rows = [{"event": "run_tests", "call": 1, "passed": ["a", "b"], "failed": ["c"]},
             {"event": "run_tests", "call": 2, "passed": ["a"], "failed": []}]
     assert [f.kind for f in review_build_log(rows)] == ["test_count_decreased"]
+
+
+def test_canary_deleted_scope_file_is_tests_tampered_without_calling_the_inspector(tmp_path, canary_dir):
+    """Review fix: a missing spec.md crashed the inspect stage; tests_tampered overrides everything (spec 4.1)."""
+    from paper2code.config import Config
+    from paper2code.manager.graph import RunContext, run_stage
+    from tests.test_inspect_stage import _seed_built_run
+
+    class NeverCalled:
+        def parse(self, role, instructions, user, schema):
+            raise AssertionError("the inspector must not be consulted when the scope is tampered")
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    (rec.run_dir / "scope" / "spec.md").unlink()
+    final = run_stage("inspect", rec.run_dir, RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), chat_model=NeverCalled()))
+    assert final.outcome is Outcome.TESTS_TAMPERED and final.error is None
+    assert "spec.md" in Verdict.load(rec.run_dir).integrity_mismatches
+
+
+def test_canary_provider_outage_is_recoverable_through_the_pipeline(tmp_path, canary_dir):
+    """Review fix: after error/api_error the report node advanced the stage past inspect, so a re-run did nothing."""
+    from paper2code.config import Config
+    from paper2code.llm.base import LLMError
+    from paper2code.manager.graph import RunContext, run_pipeline
+    from tests.test_inspect_stage import _seed_built_run
+
+    class Down:
+        def parse(self, role, instructions, user, schema):
+            raise LLMError("provider down")
+
+    rec = _seed_built_run(tmp_path, canary_dir, "reference")
+    cfg = Config(runs_root=tmp_path, run_tests_timeout_s=120)
+    after = run_pipeline(rec.run_dir, RunContext(config=cfg, chat_model=Down()))
+    assert after.outcome is Outcome.ERROR and after.error.stage == "inspect" and after.error.reason == "api_error"
+    assert (rec.run_dir / "summary.md").exists() and not (rec.run_dir / "verdict.json").exists()
+    assert not after.is_done("inspect")
+    after.outcome = None
+    after.error = None
+    after.save()
+    again = run_pipeline(rec.run_dir, RunContext(config=cfg, llm="fake"))
+    assert again.outcome is Outcome.COMPLETED and again.stage == "report" and (rec.run_dir / "verdict.json").exists()

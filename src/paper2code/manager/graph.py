@@ -78,6 +78,11 @@ def make_node(stage: str, fn: StageFn, ctx: RunContext):
             record.error = RunError(stage=stage, reason="exception", message=f"{type(exc).__name__}: {exc}")
             record.save()
             raise
+        if stage == "report" and record.error is not None and record.error.stage != "report":
+            # The run ended in an earlier stage's error. Leave `stage` there so that clearing the
+            # error and re-running repeats that stage; summary.md is rewritten on every run anyway.
+            record.save()
+            return {}
         record.stage = stage
         record.save()
         return {}

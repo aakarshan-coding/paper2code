@@ -300,3 +300,13 @@ def test_wall_clock_resumes_from_first_session_start(tmp_path, canary_dir):
     with pytest.raises(_BF):
         s.run_tests()
     assert s.finish_reason == WALL_CLOCK_CAP
+
+
+def test_run_tests_row_records_errored_and_timed_out(tmp_path, canary_dir):
+    rec = _seed_run(tmp_path, canary_dir)
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    (broken / "canary_method.py").write_text("def ema(xs, alpha:\n", encoding="utf-8")  # syntax error: collection fails
+    run_stage("build", rec.run_dir, _ctx(tmp_path, broken))
+    row = BuildLog(rec.run_dir / "build.log").events("run_tests")[0]
+    assert row["errored"] and row["timed_out"] is False and row["failed"] == row["errored"]

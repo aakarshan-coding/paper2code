@@ -7,8 +7,7 @@ from pathlib import Path
 
 from paper2code.manager.buildlog import BuildLog
 from paper2code.manager.record import RunRecord
-
-_SKIP_DIRS = ("__pycache__", ".venv", "venv", ".git", ".pytest_cache", ".assignment")
+from paper2code.manager.review import SKIP_DIRS as _SKIP_DIRS
 PAPER_FILE = "paper.md"
 
 

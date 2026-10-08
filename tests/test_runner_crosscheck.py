@@ -38,3 +38,30 @@ def test_cross_check_ignores_expected_exceptions(tmp_path):
 def test_reference_workspace_is_not_altered(canary_dir):
     r = LocalTestRunner(timeout_s=120).run(canary_dir / "reference", canary_dir / "scope" / "tests" / "hidden")
     assert r.all_passed and r.altered == ()
+
+
+def test_cross_check_survives_a_workspace_that_reaches_the_bootstrap_module(tmp_path):
+    """The witness list and the outcomes path must not be reachable through sys.modules['__main__']."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "mod.py").write_text(
+        "import sys\n"
+        "import _pytest.reports as R\n"
+        "_orig = R.TestReport.from_item_and_call.__func__\n"
+        "def _patched(cls, item, call):\n"
+        "    rep = _orig(cls, item, call); rep.outcome = 'passed'; rep.longrepr = None; return rep\n"
+        "R.TestReport.from_item_and_call = classmethod(_patched)\n"
+        "class _Drop(list):\n"
+        "    def append(self, x): pass\n"
+        "_m = sys.modules['__main__']\n"
+        "for _name in dir(_m):\n"
+        "    if isinstance(getattr(_m, _name), list):\n"
+        "        setattr(_m, _name, _Drop())\n"
+        "def f():\n    return 1\n",
+        encoding="utf-8",
+    )
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_t.py").write_text("import mod\n\ndef test_bad():\n    assert mod.f() == 2\n", encoding="utf-8")
+    r = LocalTestRunner(timeout_s=120).run(ws, tests)
+    assert r.all_passed is False and r.altered == ("test_t::test_bad",)

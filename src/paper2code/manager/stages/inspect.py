@@ -9,6 +9,7 @@ from paper2code.llm.factory import make_chat_model
 from paper2code.manager.buildlog import BuildLog
 from paper2code.manager.freeze import MANIFEST_NAME, hash_tree, tree_digest, verify_manifest
 from paper2code.manager.graph import RunContext
+from paper2code.manager.outcomes import Outcome
 from paper2code.manager.record import RunRecord
 from paper2code.manager.review import review_build_log, review_workspace
 from paper2code.manager.verdict import Flag, Verdict, decide
@@ -28,6 +29,16 @@ def run(record: RunRecord, ctx: RunContext) -> None:
     if tree_digest(hash_tree(workspace)) != record.workspace_sha256:
         mismatches.append("workspace")  # not the tree that passed the public tests
     mismatches = sorted(set(mismatches))
+    if mismatches:
+        # tests_tampered overrides everything (spec 4.1): nothing else is run or billed, and a scope
+        # with files missing would only crash the hidden run and the bundle.
+        Verdict(
+            outcome=Outcome.TESTS_TAMPERED,
+            integrity_mismatches=list(mismatches),
+            summary="scope integrity violated: " + ", ".join(mismatches) + "; hidden tests and code review not run",
+        ).write(run_dir)
+        record.outcome = Outcome.TESTS_TAMPERED
+        return
 
     # 2. Hidden tests, once (spec 10.3.2).
     hidden = make_runner(ctx).run(workspace, scope / "tests" / "hidden")

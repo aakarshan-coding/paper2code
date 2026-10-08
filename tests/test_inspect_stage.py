@@ -56,7 +56,7 @@ def test_edited_hidden_test_is_tests_tampered(tmp_path, canary_dir):
     assert final.outcome is Outcome.TESTS_TAMPERED
     v = Verdict.load(rec.run_dir)
     assert v.integrity_mismatches == ["tests/hidden/test_claim_hidden.py"]
-    assert len(v.hidden_passed) == 5  # hidden tests still run and are recorded
+    assert v.hidden_passed == [] and v.hidden_failed == []  # a tampered scope is decided without running anything  # hidden tests still run and are recorded
 
 
 def test_added_public_conftest_is_tests_tampered(tmp_path, canary_dir):

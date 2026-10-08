@@ -30,24 +30,30 @@ import json
 import sys
 import pytest  # resolved from site-packages: the workspace is not on sys.path yet
 
-_seen = []
 
 
-class _Witness:
+def _witness(outcomes_path):
     # Records what each test actually did, before any report object exists. A workspace that
-    # patches pytest's reporting cannot change what this hook saw.
-    @pytest.hookimpl(tryfirst=True)
-    def pytest_runtest_makereport(self, item, call):
-        _seen.append({"nodeid": item.nodeid, "when": call.when, "raised": call.excinfo is not None,
-                      "xfail": item.get_closest_marker("xfail") is not None})
+    # patches pytest's reporting cannot change what this hook saw. The list and the path live in
+    # this closure, not on the module, so workspace code reaching __main__ finds nothing to swap.
+    seen = []
 
-    def pytest_sessionfinish(self, session, exitstatus):
-        with open(sys.argv[2], "w", encoding="utf-8") as fh:
-            json.dump(_seen, fh)
+    class _Witness:
+        @pytest.hookimpl(tryfirst=True)
+        def pytest_runtest_makereport(self, item, call):
+            seen.append({"nodeid": item.nodeid, "when": call.when, "raised": call.excinfo is not None,
+                         "xfail": item.get_closest_marker("xfail") is not None})
+
+        def pytest_sessionfinish(self, session, exitstatus):
+            with open(outcomes_path, "w", encoding="utf-8") as fh:
+                json.dump(seen, fh)
+
+    return _Witness()
 
 
+_plugin = _witness(sys.argv[2])
 sys.path.insert(0, sys.argv[1])
-sys.exit(pytest.main(sys.argv[3:], plugins=[_Witness()]))
+sys.exit(pytest.main(sys.argv[3:], plugins=[_plugin]))
 """
 _STRIPPED_ENV = ("PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")
 # Model-written test code runs in this subprocess. It must not see the operator's credentials.

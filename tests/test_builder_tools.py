@@ -106,3 +106,12 @@ def test_tool_exceptions_are_logged_as_errors(tmp_path, canary_dir, monkeypatch)
     text, err = tools.call("read_file", {"path": "x.py"})
     assert err and "tool error" in text and "decoder exploded" in text
     assert log.events("tool_call")[-1]["ok"] is False
+
+
+def test_tool_call_summary_keeps_whole_commands_but_not_file_contents():
+    from paper2code.agents.builder.tools import _summarise
+
+    long_cmd = "python -c 'import os; " + "x = 1; " * 30 + "print(os.listdir(\'../scope/tests/hidden\'))'"
+    out = _summarise({"command": long_cmd, "content": "y = 2\n" * 200, "path": "a.py"})
+    assert out["command"] == long_cmd and len(out["command"]) > 200  # the review must see the end of a command
+    assert len(out["content"]) < 200 and "chars]" in out["content"]

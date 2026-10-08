@@ -604,3 +604,22 @@ Generated for the NeuralZip run: about 1,700 words, 24 seconds, 0.21 USD. The wr
 ### Lesson worth a blog paragraph
 
 A model can write a good narrative about a run when it is not allowed to be the source of any fact in it. The structure that makes this safe is the same one the inspector uses: the model points (a line range, a judgment), the manager prints (the lines, the numbers). The reader gets prose that reads like a person wrote it, and every checkable claim in it can be traced to a file in the record.
+
+### What the review found (the story)
+
+The fresh reviewer read the diff, ran the suite, and wrote probe scripts. Two critical findings, six important, seven minor. All critical and important ones were fixed test-first; the suite went from 368 to 377.
+
+1. **Critical: the excerpt path check only rejected POSIX-style absolute paths.** On Windows, a writer excerpt pointing at `C:/Users/.../.modal.toml` would have been read and printed into `story.md`, which `daily` then pushes to a repository. The writer reads untrusted workspace text, so a line in the agent's README could have asked for exactly that. The reviewer demonstrated it with `C:/Windows/win.ini`. Excerpts are now resolved and must lie inside the workspace, must be `.py` text files, and any absolute, UNC or `..` form is dropped. A test tries all four escapes and checks that a planted secret never appears.
+2. **Critical: the style post-check rewrote code inside excerpts.** It split the whole file on blank lines, so any code block containing a blank line had its middle treated as prose: newlines collapsed, sentences "split". The first real story survived only because the lines after its blank lines happened to be comments. The post-check now runs on the writer's prose fields only, before assembly; the manager's lines and the code are never touched. A test puts a two-function excerpt with a blank line through it and checks the code is byte-for-byte intact.
+3. Hidden test code was still part of the writer's input, protected only by a prompt sentence, and the test meant to catch a leak asserted on the wrong line. The writer no longer sees hidden test code at all, and any prose line that quotes a hidden source line is replaced with a redaction marker.
+4. Excerpts could point at any workspace file, including a Markdown file with a fence that closed the code block early and rendered as a fake header on the dashboard, or a binary blob. Only `.py` text files are accepted, and the fence is one backtick longer than any run inside the code.
+5. Nothing marked which text was the model's. A provenance line now sits under the title, and any header, table or bullet markup the writer emits is flattened to prose, so only the manager's headers are headers.
+6. The cost table was rendered from the stale on-disk record: wall time read "not recorded" during the pipeline's own render, and the story's own cost was missing. The in-memory record is passed through and charged before rendering.
+7. "Tokens (builder)" was a wrong label for a counter that covers every model call. Relabelled.
+8. A resumed run re-ran the report stage, which rewrote the story and billed the writer again. The stage now skips when the story exists, and skips with a note when a run has no scope.
+
+The re-rendered real story now carries the provenance line, the corrected labels, and the full cost including its own writing.
+
+### Lesson worth a blog paragraph
+
+The exfiltration path is worth remembering: a function that reads a file path chosen by a model is a function that reads a file path chosen by whoever can influence that model, and the workspace is written by another model that reads the paper, which is written by strangers. Every path a model supplies needs the same containment as a path a user supplies over the network, on every platform the code runs on. The second lesson is about blast radius: a cosmetic post-processor applied to the whole document could corrupt the one part of the document that must be exact. Transformations belong on the data they are meant for, and nowhere else.

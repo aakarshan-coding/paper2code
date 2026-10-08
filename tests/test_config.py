@@ -86,3 +86,9 @@ def test_step4b_config_defaults():
 
 def test_inspector_config_default():
     assert Config().inspector_max_chars == 120_000
+
+
+def test_step6_config_defaults():
+    cfg = Config()
+    assert cfg.runs_repo_url == "" and cfg.notify_url == "" and cfg.daily_builder == "agent"
+    assert cfg.schedule_cron == "0 13 * * *" and cfg.test_function_timeout_s == 1800

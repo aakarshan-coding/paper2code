@@ -39,3 +39,9 @@ sandbox_cpu: 2.0
 sandbox_memory_mb: 4096
 payload_max_mb: 50             # a run_tests snapshot bigger than this is refused
 inspector_max_chars: 120000    # paper + spec + tests + workspace + build log sent to the inspector, about 30k tokens
+
+runs_repo_url: ""              # e.g. https://github.com/<you>/paper2code-runs ; empty = local directory, no push
+notify_url: ""                 # POST a JSON summary here when a daily run finishes; empty = off
+daily_builder: agent           # what `paper2code daily` uses
+schedule_cron: "0 13 * * *"    # UTC; Modal cron for daily_run (deploy after changing)
+test_function_timeout_s: 1800  # must match PAPER2CODE_TEST_FUNCTION_TIMEOUT at deploy; must exceed run_tests_timeout_s

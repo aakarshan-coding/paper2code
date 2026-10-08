@@ -69,6 +69,11 @@ class Config:
     sandbox_memory_mb: int = 4096
     payload_max_mb: int = 50
     inspector_max_chars: int = 120_000
+    runs_repo_url: str = ""
+    notify_url: str = ""
+    daily_builder: str = "agent"
+    schedule_cron: str = "0 13 * * *"
+    test_function_timeout_s: int = 1800
 
 
 def load_config(path: Path) -> Config:
@@ -105,4 +110,9 @@ def load_config(path: Path) -> Config:
         sandbox_memory_mb=int(raw.get("sandbox_memory_mb", defaults.sandbox_memory_mb)),
         payload_max_mb=int(raw.get("payload_max_mb", defaults.payload_max_mb)),
         inspector_max_chars=int(raw.get("inspector_max_chars", defaults.inspector_max_chars)),
+        runs_repo_url=str(raw.get("runs_repo_url", defaults.runs_repo_url) or ""),
+        notify_url=str(raw.get("notify_url", defaults.notify_url) or ""),
+        daily_builder=str(raw.get("daily_builder", defaults.daily_builder)),
+        schedule_cron=str(raw.get("schedule_cron", defaults.schedule_cron)),
+        test_function_timeout_s=int(raw.get("test_function_timeout_s", defaults.test_function_timeout_s)),
     )

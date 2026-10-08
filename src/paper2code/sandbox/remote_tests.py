@@ -18,6 +18,7 @@ from paper2code.manager.freeze import hash_tree, tree_digest
 from paper2code.sandbox.runner import (
     _BOOTSTRAP,
     TestRunResult,
+    cross_check,
     parse_junit,
     parse_junit_details,
     parse_junit_errors,
@@ -89,29 +90,31 @@ def execute_tests(payload: bytes, timeout_s: int) -> dict:
         snapshot.mkdir(exist_ok=True)
         tests.mkdir(exist_ok=True)
         report = root / "report.xml"
+        outcomes = root / "outcomes.json"
         bootstrap = root / "bootstrap.py"
         bootstrap.write_text(_BOOTSTRAP, encoding="utf-8")
         digest = tree_digest(hash_tree(snapshot))
         env = scrubbed_environment()
         env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         cmd = [
-            sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(tests),
+            sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(outcomes), str(tests),
             "-q", "-p", "no:cacheprovider", f"--junitxml={report}", "--rootdir", str(tests),
         ]
         start = time.monotonic()
         returncode, stdout, stderr, timed_out = run_killable(cmd, cwd=root, env=env, timeout_s=timeout_s)
         duration = time.monotonic() - start
         if timed_out or not report.exists():
-            passed, failed, errored, skipped, messages = (), (), (), (), {}
+            passed, failed, errored, skipped, messages, altered = (), (), (), (), {}, ()
         else:
             passed, failed = parse_junit(report)
             errored = parse_junit_errors(report)
             skipped, messages = parse_junit_details(report)
+            passed, failed, errored, skipped, messages, altered = cross_check(outcomes, passed, failed, errored, skipped, messages)
         return {
             "passed": list(passed), "failed": list(failed), "errored": list(errored), "skipped": list(skipped),
             "messages": dict(messages), "returncode": returncode, "timed_out": timed_out,
             "duration_s": round(duration, 3), "output": (stdout + stderr)[-MAX_OUTPUT_CHARS:],
-            "workspace_sha256": digest,
+            "workspace_sha256": digest, "altered": list(altered),
         }
 
 
@@ -119,5 +122,5 @@ def result_from_dict(d: dict, gpu_seconds: float) -> TestRunResult:
     return TestRunResult(
         tuple(d["passed"]), tuple(d["failed"]), int(d["returncode"]), bool(d["timed_out"]), float(d["duration_s"]),
         float(gpu_seconds), str(d.get("output", "")), str(d.get("workspace_sha256", "")),
-        tuple(d.get("errored", ())), tuple(d.get("skipped", ())), dict(d.get("messages", {})),
+        tuple(d.get("errored", ())), tuple(d.get("skipped", ())), dict(d.get("messages", {})), tuple(d.get("altered", ())),
     )

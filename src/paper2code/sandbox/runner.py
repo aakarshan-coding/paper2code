@@ -4,6 +4,7 @@ Build step 4 adds a Modal-backed runner with the same interface.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -25,10 +26,28 @@ _IGNORE = shutil.ignore_patterns("__pycache__", ".pytest_cache", "*.pyc")
 # workspace `pytest.py` (or `sitecustomize.py` at interpreter start-up) replaces the test runner.
 # `python -I` keeps the cwd and the script directory off sys.path and ignores PYTHON* env vars.
 _BOOTSTRAP = """\
+import json
 import sys
 import pytest  # resolved from site-packages: the workspace is not on sys.path yet
+
+_seen = []
+
+
+class _Witness:
+    # Records what each test actually did, before any report object exists. A workspace that
+    # patches pytest's reporting cannot change what this hook saw.
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_runtest_makereport(self, item, call):
+        _seen.append({"nodeid": item.nodeid, "when": call.when, "raised": call.excinfo is not None,
+                      "xfail": item.get_closest_marker("xfail") is not None})
+
+    def pytest_sessionfinish(self, session, exitstatus):
+        with open(sys.argv[2], "w", encoding="utf-8") as fh:
+            json.dump(_seen, fh)
+
+
 sys.path.insert(0, sys.argv[1])
-sys.exit(pytest.main(sys.argv[2:]))
+sys.exit(pytest.main(sys.argv[3:], plugins=[_Witness()]))
 """
 _STRIPPED_ENV = ("PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")
 # Model-written test code runs in this subprocess. It must not see the operator's credentials.
@@ -59,6 +78,7 @@ class TestRunResult:
     errored: tuple[str, ...] = ()  # collection/setup errors; a subset of `failed`
     skipped: tuple[str, ...] = ()  # skipped or xfailed; a subset of `failed`
     messages: dict[str, str] = field(default_factory=dict)  # test id -> failure/error message
+    altered: tuple[str, ...] = ()  # reported passed by JUnit but seen raising by the runner's own witness hook
 
     @property
     def all_passed(self) -> bool:
@@ -165,6 +185,37 @@ def parse_junit_details(path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
     return tuple(skipped), messages
 
 
+def _junit_id(nodeid: str) -> str:
+    """pytest's JUnit id for a nodeid: 'dir/test_x.py::TestC::test_a[1]' -> 'dir.test_x.TestC::test_a[1]'."""
+    path, _, rest = nodeid.partition("::")
+    module = path[:-3] if path.endswith(".py") else path
+    parts = [module.replace("/", ".")] + rest.split("::")
+    return ".".join(parts[:-1]) + "::" + parts[-1]
+
+
+def cross_check(outcomes: Path, passed, failed, errored, skipped, messages):
+    """Move any test the witness hook saw raising (call phase, not xfail) out of `passed`.
+
+    Returns (passed, failed, errored, skipped, messages, altered). A missing or unreadable outcomes
+    file (pytest never finished) changes nothing."""
+    unchanged = (tuple(passed), tuple(failed), tuple(errored), tuple(skipped), dict(messages), ())
+    if not outcomes.exists():
+        return unchanged
+    try:
+        seen = json.loads(outcomes.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return unchanged
+    raised = {_junit_id(s["nodeid"]) for s in seen if s.get("when") == "call" and s.get("raised") and not s.get("xfail")}
+    passed_l, failed_l, messages_d, altered = list(passed), list(failed), dict(messages), []
+    for test_id in list(passed_l):
+        if test_id in raised:
+            passed_l.remove(test_id)
+            failed_l.append(test_id)
+            messages_d[test_id] = "outcome altered in-process: the test raised but was reported as passed"
+            altered.append(test_id)
+    return tuple(passed_l), tuple(failed_l), tuple(errored), tuple(skipped), messages_d, tuple(altered)
+
+
 class LocalTestRunner:
     """Runs `tests_dir` against a snapshot copy of `workspace` with a hard timeout. No GPU."""
 
@@ -178,13 +229,14 @@ class LocalTestRunner:
             shutil.copytree(workspace, snapshot, ignore=_IGNORE)
             shutil.copytree(tests_dir, tests_copy, ignore=_IGNORE)
             report = Path(tmp) / "report.xml"
+            outcomes = Path(tmp) / "outcomes.json"
             bootstrap = Path(tmp) / "bootstrap.py"
             bootstrap.write_text(_BOOTSTRAP, encoding="utf-8")
             digest = tree_digest(hash_tree(snapshot))
             env = scrubbed_environment()
             env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
             cmd = [
-                sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(tests_copy),
+                sys.executable, "-I", "-B", str(bootstrap), str(snapshot), str(outcomes), str(tests_copy),
                 "-q", "-p", "no:cacheprovider",
                 f"--junitxml={report}", "--rootdir", str(tests_copy),
             ]
@@ -196,6 +248,7 @@ class LocalTestRunner:
             passed, failed = parse_junit(report) if report.exists() else ((), ())
             errored = parse_junit_errors(report) if report.exists() else ()
             skipped, messages = parse_junit_details(report) if report.exists() else ((), {})
+            passed, failed, errored, skipped, messages, altered = cross_check(outcomes, passed, failed, errored, skipped, messages)
             return TestRunResult(
-                passed, failed, returncode, False, duration, 0.0, stdout + stderr, digest, errored, skipped, messages,
+                passed, failed, returncode, False, duration, 0.0, stdout + stderr, digest, errored, skipped, messages, altered,
             )

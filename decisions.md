@@ -623,3 +623,20 @@ The re-rendered real story now carries the provenance line, the corrected labels
 ### Lesson worth a blog paragraph
 
 The exfiltration path is worth remembering: a function that reads a file path chosen by a model is a function that reads a file path chosen by whoever can influence that model, and the workspace is written by another model that reads the paper, which is written by strangers. Every path a model supplies needs the same containment as a path a user supplies over the network, on every platform the code runs on. The second lesson is about blast radius: a cosmetic post-processor applied to the whole document could corrupt the one part of the document that must be exact. Transformations belong on the data they are meant for, and nowhere else.
+
+## 2026-10-08: Polish for a portfolio, and what CI found
+
+The author wants the repository to stand on its own in front of people who build coding agents. Five things were done: the README became a front page that leads with the honesty problem and links to the live dashboard and a real story; `docs/honesty.md` walks the defenses in order with the tests that pin each one; an MIT license, a short contributing guide and repository badges; a two-minute offline demo in the README; and a GitHub Actions workflow that runs the unit suite on Linux and Windows.
+
+### What the first CI run found
+
+The suite had only ever run on the author's Windows machine, with the author's keys in the environment. CI had neither, and both jobs failed. Reproducing CI locally (a fresh virtual environment on Windows, and a Linux run under WSL) showed four separate causes.
+
+1. **Two tests were calling the real OpenAI inspector and writer.** One resumed a run through the pipeline without `--llm fake`; one ran the inspect stage with a default context. On the author's machine they found a key and quietly spent a few cents per run; on CI they failed on the missing key. The unit suite now hides every real credential from itself through an autouse fixture, so an accidental model call fails on every machine. Opt-in live tests keep their keys.
+2. **The sandbox workspace listed files with an absolute path in its shell command.** A step 4b patch meant to make it relative had silently not applied (a text replacement that did not match), and the Windows shell tolerated the absolute form. On Linux, the test double's path mapping broke it. The command is relative now, like the other sandbox commands.
+3. **The test double for the sandbox mapped paths wrongly on POSIX**, because a Linux temp directory also starts with a slash. Fixed in the fake.
+4. **The local workspace did not refuse a Windows-style absolute path on Linux.** It does now, on every platform, matching the Modal workspace and the story renderer.
+
+### Lesson worth a blog paragraph
+
+A test suite that always runs with the developer's secrets present cannot tell you whether it needs them. Two tests had been spending real money for weeks and nobody noticed, because they passed. The fix is to make the suite's environment hostile on purpose: strip every credential, and let anything that needs one fail loudly. The second lesson is quieter: a text-replacement patch that does not match is a no-op, and a no-op patch with passing tests looks exactly like success. Patches should assert that they changed something.

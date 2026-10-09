@@ -2,6 +2,8 @@
 name = "paper2code"
 version = "0.1.0"
 description = "Daily unattended loop: pick an arXiv paper, scope it, build it against tests, inspect the result."
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
     "langgraph>=0.2",
@@ -10,6 +12,8 @@ dependencies = [
     "openai>=3",
     "httpx>=0.27",
     "pydantic>=2",
+    "claude-agent-sdk>=0.2",
+    "modal>=1.6",
 ]
 
 [project.optional-dependencies]

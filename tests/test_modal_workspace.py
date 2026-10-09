@@ -52,9 +52,12 @@ class FakeSandbox:
         return data
 
     def _p(self, remote: str) -> Path:
-        if remote.startswith("/"):
-            p = (self.base / remote.lstrip("/")).resolve()
-        else:  # the workspace root is passed as a real local path in these tests
+        local = Path(remote)
+        if local.is_absolute() and (self.base.resolve() in local.resolve().parents or local.resolve() == self.base.resolve()):
+            p = local.resolve()  # the workspace root is passed as a real local path in these tests
+        elif remote.startswith("/"):
+            p = (self.base / remote.lstrip("/")).resolve()  # a sandbox path such as /work or /tmp/x
+        else:
             p = Path(remote).resolve()
             assert self.base.resolve() in p.parents, remote
         p.parent.mkdir(parents=True, exist_ok=True)

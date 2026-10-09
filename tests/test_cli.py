@@ -40,7 +40,7 @@ def test_single_stage_then_resume(tmp_path, canary_dir, capsys):
     ref = str(canary_dir / "reference")
     assert main(["build", "--run", str(run_dir), "--no-gpu", "--builder", "stub", "--reference", ref]) == 0
     assert RunRecord.load(run_dir).stage == "build"
-    assert main(["run", "--run", str(run_dir), "--no-gpu", "--builder", "stub", "--reference", ref]) == 0
+    assert main(["run", "--run", str(run_dir), "--no-gpu", "--builder", "stub", "--reference", ref, "--llm", "fake"]) == 0
     rec = RunRecord.load(run_dir)
     assert rec.stage == "report"
     assert rec.outcome is not None

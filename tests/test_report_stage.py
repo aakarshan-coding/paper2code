@@ -8,7 +8,7 @@ from paper2code.manager.verdict import Verdict
 
 
 def _ctx(tmp_path):
-    return RunContext(config=Config(runs_root=tmp_path))
+    return RunContext(config=Config(runs_root=tmp_path), llm="fake")
 
 
 def test_summary_after_completed_run(tmp_path):

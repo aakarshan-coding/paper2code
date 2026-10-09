@@ -292,7 +292,7 @@ def test_passing_tree_is_checkpointed_so_a_failed_export_cannot_look_like_tamper
     mid.stage = "build"
     mid.scope_manifest_sha256 = manifest_sha256(rec.run_dir / "scope")  # init-run anchors this; _seed_run does not
     mid.save()
-    final = run_stage("inspect", rec.run_dir, RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), no_gpu=True, builder="agent"))
+    final = run_stage("inspect", rec.run_dir, RunContext(config=Config(runs_root=tmp_path, run_tests_timeout_s=120), no_gpu=True, builder="agent", llm="fake"))
     assert final.outcome is not Outcome.TESTS_TAMPERED and final.outcome is Outcome.COMPLETED
 
 

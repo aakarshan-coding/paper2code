@@ -83,11 +83,15 @@ class ModalWorkspace:
         except Exception as exc:
             raise InfrastructureError(f"sandbox write failed: {type(exc).__name__}: {exc}") from exc
 
+    def _relative(self, path: str) -> str:
+        """`path` confined and expressed relative to the root, for shell commands run with cwd=root."""
+        full = self._resolve(path) if path else self.root
+        return "." if full == self.root else "./" + full[len(self.root) + 1:]
+
     def list_files(self, path: str = "") -> list[str]:
-        base = self._resolve(path) if path else self.root
+        base = self._relative(path)  # relative: the exec runs in the root, and no absolute path appears in the command
         r = self.exec(f"find {shlex.quote(base)} -type f -not -path '*/__pycache__/*' 2>/dev/null | sort", timeout_s=60)
-        prefix = self.root + "/"
-        return [line[len(prefix):] for line in r.stdout.split("\n") if line.startswith(prefix)]
+        return [line[2:] for line in r.stdout.split("\n") if line.startswith("./")]
 
     def exec(self, command: str, timeout_s: int) -> ExecResult:
         start = time.monotonic()

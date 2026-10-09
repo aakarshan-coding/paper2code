@@ -6,7 +6,7 @@ from __future__ import annotations
 import shutil
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Protocol
 
 from paper2code.sandbox.runner import run_killable, scrubbed_environment
@@ -54,7 +54,7 @@ class LocalWorkspace:
 
     def _resolve(self, path: str) -> Path:
         candidate = Path(path)
-        if candidate.is_absolute():
+        if candidate.is_absolute() or PureWindowsPath(path).is_absolute() or path.startswith(("/", "\\")):
             raise WorkspaceError(f"absolute paths are not allowed: {path}")
         full = (self.root / candidate).resolve()
         if full != self.root and self.root not in full.parents:
